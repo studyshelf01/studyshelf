@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
 
 export default function UploadPage() {
@@ -15,6 +15,20 @@ export default function UploadPage() {
 
   const [message, setMessage] = useState("");
   const [isUploading, setIsUploading] = useState(false);
+
+  useEffect(() => {
+    async function checkLogin() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        window.location.href = "/student-login";
+      }
+    }
+
+    checkLogin();
+  }, []);
 
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
@@ -34,6 +48,18 @@ export default function UploadPage() {
     setIsUploading(true);
 
     try {
+      // Get the currently logged-in account
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        setMessage("You must be logged in to upload a resource.");
+        setIsUploading(false);
+        return;
+      }
+
       // Create a unique file name
       const fileExtension = file.name.split(".").pop() || "pdf";
 
@@ -57,15 +83,16 @@ export default function UploadPage() {
         return;
       }
 
-      // Get the public URL of the uploaded file
+      // Get the public URL
       const {
         data: { publicUrl },
       } = supabase.storage
         .from("resources")
         .getPublicUrl(safeFileName);
 
-      // Save the resource information in the database
-      // IMPORTANT: We do NOT use .select() here.
+      // Save resource information
+      // IMPORTANT:
+      // user_id automatically identifies the account that uploaded it.
       const { error: databaseError } = await supabase
         .from("resources")
         .insert({
@@ -77,6 +104,7 @@ export default function UploadPage() {
           type: type,
           file_url: publicUrl,
           uploader_name: uploaderName,
+          user_id: user.id,
           status: "pending",
         });
 
@@ -91,12 +119,11 @@ export default function UploadPage() {
         return;
       }
 
-      // Everything worked!
       setMessage(
         "Success! Your resource has been submitted for admin approval."
       );
 
-      // Clear the form
+      // Clear form
       setFile(null);
       setTitle("");
       setDescription("");
@@ -106,7 +133,6 @@ export default function UploadPage() {
       setType("");
       setUploaderName("");
 
-      // Reset the file input
       const fileInput = document.getElementById(
         "file"
       ) as HTMLInputElement;
@@ -128,7 +154,6 @@ export default function UploadPage() {
   return (
     <main className="min-h-screen bg-gray-50 px-6 py-12">
       <div className="mx-auto max-w-3xl">
-        {/* Header */}
         <div className="mb-8">
           <a
             href="/"
@@ -147,12 +172,10 @@ export default function UploadPage() {
           </p>
         </div>
 
-        {/* Form */}
         <form
           onSubmit={handleUpload}
           className="space-y-6 rounded-2xl bg-white p-8 shadow-sm"
         >
-          {/* File */}
           <div>
             <label
               htmlFor="file"
@@ -176,7 +199,6 @@ export default function UploadPage() {
             </p>
           </div>
 
-          {/* Title */}
           <div>
             <label
               htmlFor="title"
@@ -195,7 +217,6 @@ export default function UploadPage() {
             />
           </div>
 
-          {/* Description */}
           <div>
             <label
               htmlFor="description"
@@ -214,7 +235,6 @@ export default function UploadPage() {
             />
           </div>
 
-          {/* Grade */}
           <div>
             <label
               htmlFor="grade"
@@ -239,7 +259,6 @@ export default function UploadPage() {
             </select>
           </div>
 
-          {/* Subject */}
           <div>
             <label
               htmlFor="subject"
@@ -258,7 +277,6 @@ export default function UploadPage() {
             />
           </div>
 
-          {/* Topic */}
           <div>
             <label
               htmlFor="topic"
@@ -277,7 +295,6 @@ export default function UploadPage() {
             />
           </div>
 
-          {/* Type */}
           <div>
             <label
               htmlFor="type"
@@ -301,7 +318,6 @@ export default function UploadPage() {
             </select>
           </div>
 
-          {/* Name */}
           <div>
             <label
               htmlFor="uploaderName"
@@ -315,12 +331,11 @@ export default function UploadPage() {
               type="text"
               value={uploaderName}
               onChange={(e) => setUploaderName(e.target.value)}
-              placeholder="Example: Alan"
+              placeholder="Example: Anonymous"
               className="w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-blue-500"
             />
           </div>
 
-          {/* Copyright notice */}
           <div className="rounded-lg bg-yellow-50 p-4 text-sm text-yellow-800">
             <strong>Before uploading:</strong> Only share resources
             that you created yourself or have permission to share.
@@ -328,14 +343,12 @@ export default function UploadPage() {
             materials, or copyrighted files without permission.
           </div>
 
-          {/* Message */}
           {message && (
             <div className="rounded-lg bg-gray-100 p-4 text-sm text-gray-800">
               {message}
             </div>
           )}
 
-          {/* Submit */}
           <button
             type="submit"
             disabled={isUploading}

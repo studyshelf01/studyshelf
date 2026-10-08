@@ -117,7 +117,14 @@ export default function Home() {
             StudyShelf
           </a>
 
-          <div className="flex w-full gap-2 sm:w-auto">
+          <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:flex-nowrap">
+            <a
+              href="/my-uploads"
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-center text-sm font-semibold hover:bg-gray-50 sm:flex-none"
+            >
+              My Uploads
+            </a>
+
             <a
               href="/upload"
               className="flex-1 rounded-lg bg-blue-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-blue-700 sm:flex-none"
@@ -340,6 +347,13 @@ export default function Home() {
           <p>StudyShelf</p>
 
           <div className="flex justify-center gap-4 sm:justify-end">
+            <a
+              href="/my-uploads"
+              className="hover:text-gray-900"
+            >
+              My Uploads
+            </a>
+
             <a
               href="/upload"
               className="hover:text-gray-900"

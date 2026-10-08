@@ -41,6 +41,14 @@ export default function AdminPage() {
   const [reviewsLoading, setReviewsLoading] = useState(true);
   const [message, setMessage] = useState("");
 
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editGrade, setEditGrade] = useState("");
+  const [editSubject, setEditSubject] = useState("");
+  const [editTopic, setEditTopic] = useState("");
+  const [editType, setEditType] = useState("");
+
   useEffect(() => {
     async function checkAdmin() {
       const {
@@ -150,6 +158,75 @@ export default function AdminPage() {
 
     setReviews(reviewsWithResources);
     setReviewsLoading(false);
+  }
+
+  function startEditing(resource: Resource) {
+    setEditingId(resource.id);
+    setEditTitle(resource.title);
+    setEditDescription(resource.description || "");
+    setEditGrade(resource.grade);
+    setEditSubject(resource.subject);
+    setEditTopic(resource.topic || "");
+    setEditType(resource.type);
+    setMessage("");
+  }
+
+  function cancelEditing() {
+    setEditingId(null);
+    setEditTitle("");
+    setEditDescription("");
+    setEditGrade("");
+    setEditSubject("");
+    setEditTopic("");
+    setEditType("");
+  }
+
+  async function saveChanges(resourceId: number) {
+    if (!editTitle.trim()) {
+      setMessage("Title cannot be empty.");
+      return;
+    }
+
+    if (!editGrade.trim()) {
+      setMessage("Grade cannot be empty.");
+      return;
+    }
+
+    if (!editSubject.trim()) {
+      setMessage("Subject cannot be empty.");
+      return;
+    }
+
+    setMessage("");
+
+    const { data, error } = await supabase
+      .from("resources")
+      .update({
+        title: editTitle.trim(),
+        description: editDescription.trim() || null,
+        grade: editGrade.trim(),
+        subject: editSubject.trim(),
+        topic: editTopic.trim() || null,
+        type: editType,
+      })
+      .eq("id", resourceId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Resource update error:", error);
+      setMessage(`Could not save changes: ${error.message}`);
+      return;
+    }
+
+    setResources((current) =>
+      current.map((resource) =>
+        resource.id === resourceId ? data : resource
+      )
+    );
+
+    setEditingId(null);
+    setMessage("Resource changes saved.");
   }
 
   async function updateStatus(
@@ -344,7 +421,7 @@ export default function AdminPage() {
         <div className="mb-6">
           <h2 className="text-xl font-bold">Resources</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Review, approve, reject, hide, or remove resources.
+            Review, edit, approve, reject, hide, or remove resources.
           </p>
         </div>
 
@@ -366,106 +443,231 @@ export default function AdminPage() {
                 key={resource.id}
                 className="rounded-2xl border bg-white p-6 shadow-sm"
               >
-                <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0">
-                    <div className="mb-3 flex flex-wrap items-center gap-2">
-                      <span
-                        className={`rounded-full px-3 py-1 text-xs font-bold ${
-                          resource.status === "approved"
-                            ? "bg-green-100 text-green-700"
-                            : resource.status === "hidden"
-                            ? "bg-slate-200 text-slate-700"
-                            : "bg-yellow-100 text-yellow-700"
-                        }`}
-                      >
-                        {statusLabel(resource.status)}
-                      </span>
-
-                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-                        {resource.type}
-                      </span>
-                    </div>
-
-                    <h3 className="text-lg font-bold">{resource.title}</h3>
-
-                    <p className="mt-2 text-sm text-slate-600">
-                      {resource.subject} • {resource.grade}
-                      {resource.topic ? ` • ${resource.topic}` : ""}
-                    </p>
-
-                    {resource.description && (
-                      <p className="mt-3 text-sm text-slate-600">
-                        {resource.description}
+                {editingId === resource.id ? (
+                  <div>
+                    <div className="mb-5">
+                      <h3 className="text-lg font-bold">Edit Resource</h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Make any corrections before approving the resource.
                       </p>
-                    )}
-
-                    <div className="mt-4 text-xs text-slate-500">
-                      Uploaded by: {resource.uploader_name || "Anonymous"}
                     </div>
 
-                    <div className="mt-1 text-xs text-slate-400">
-                      ID: {resource.id}
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="md:col-span-2">
+                        <label className="mb-1 block text-sm font-semibold">
+                          Title
+                        </label>
+                        <input
+                          value={editTitle}
+                          onChange={(e) => setEditTitle(e.target.value)}
+                          className="w-full rounded-lg border px-3 py-2 outline-none focus:border-blue-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-semibold">
+                          Grade
+                        </label>
+                        <input
+                          value={editGrade}
+                          onChange={(e) => setEditGrade(e.target.value)}
+                          className="w-full rounded-lg border px-3 py-2 outline-none focus:border-blue-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-semibold">
+                          Subject
+                        </label>
+                        <input
+                          value={editSubject}
+                          onChange={(e) => setEditSubject(e.target.value)}
+                          className="w-full rounded-lg border px-3 py-2 outline-none focus:border-blue-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-semibold">
+                          Topic
+                        </label>
+                        <input
+                          value={editTopic}
+                          onChange={(e) => setEditTopic(e.target.value)}
+                          className="w-full rounded-lg border px-3 py-2 outline-none focus:border-blue-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-semibold">
+                          Resource Type
+                        </label>
+                        <select
+                          value={editType}
+                          onChange={(e) => setEditType(e.target.value)}
+                          className="w-full rounded-lg border px-3 py-2 outline-none focus:border-blue-500"
+                        >
+                          <option value="Notes">Notes</option>
+                          <option value="Assignment">Assignment</option>
+                          <option value="Practice">Practice</option>
+                          <option value="Flashcards">Flashcards</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="mb-1 block text-sm font-semibold">
+                          Description
+                        </label>
+                        <textarea
+                          value={editDescription}
+                          onChange={(e) =>
+                            setEditDescription(e.target.value)
+                          }
+                          rows={4}
+                          className="w-full rounded-lg border px-3 py-2 outline-none focus:border-blue-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-5 flex flex-wrap gap-2">
+                      <button
+                        onClick={() => saveChanges(resource.id)}
+                        className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                      >
+                        Save Changes
+                      </button>
+
+                      <button
+                        onClick={cancelEditing}
+                        className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+
+                      <a
+                        href={resource.file_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-slate-50"
+                      >
+                        Preview File
+                      </a>
                     </div>
                   </div>
+                ) : (
+                  <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="mb-3 flex flex-wrap items-center gap-2">
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-bold ${
+                            resource.status === "approved"
+                              ? "bg-green-100 text-green-700"
+                              : resource.status === "hidden"
+                              ? "bg-slate-200 text-slate-700"
+                              : "bg-yellow-100 text-yellow-700"
+                          }`}
+                        >
+                          {statusLabel(resource.status)}
+                        </span>
 
-                  <div className="flex flex-wrap gap-2">
-                    <a
-                      href={resource.file_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-slate-50"
-                    >
-                      Preview
-                    </a>
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                          {resource.type}
+                        </span>
+                      </div>
 
-                    {resource.status === "pending" && (
-                      <>
+                      <h3 className="text-lg font-bold">
+                        {resource.title}
+                      </h3>
+
+                      <p className="mt-2 text-sm text-slate-600">
+                        {resource.subject} • {resource.grade}
+                        {resource.topic ? ` • ${resource.topic}` : ""}
+                      </p>
+
+                      {resource.description && (
+                        <p className="mt-3 text-sm text-slate-600">
+                          {resource.description}
+                        </p>
+                      )}
+
+                      <div className="mt-4 text-xs text-slate-500">
+                        Uploaded by:{" "}
+                        {resource.uploader_name || "Anonymous"}
+                      </div>
+
+                      <div className="mt-1 text-xs text-slate-400">
+                        ID: {resource.id}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <a
+                        href={resource.file_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-slate-50"
+                      >
+                        Preview
+                      </a>
+
+                      <button
+                        onClick={() => startEditing(resource)}
+                        className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                      >
+                        Edit
+                      </button>
+
+                      {resource.status === "pending" && (
+                        <>
+                          <button
+                            onClick={() =>
+                              updateStatus(resource.id, "approved")
+                            }
+                            className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+                          >
+                            Approve
+                          </button>
+
+                          <button
+                            onClick={() => rejectResource(resource)}
+                            className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600"
+                          >
+                            Reject
+                          </button>
+                        </>
+                      )}
+
+                      {resource.status === "approved" && (
+                        <button
+                          onClick={() =>
+                            updateStatus(resource.id, "hidden")
+                          }
+                          className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                        >
+                          Hide
+                        </button>
+                      )}
+
+                      {resource.status === "hidden" && (
                         <button
                           onClick={() =>
                             updateStatus(resource.id, "approved")
                           }
-                          className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+                          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
                         >
-                          Approve
+                          Unhide
                         </button>
+                      )}
 
-                        <button
-                          onClick={() => rejectResource(resource)}
-                          className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600"
-                        >
-                          Reject
-                        </button>
-                      </>
-                    )}
-
-                    {resource.status === "approved" && (
                       <button
-                        onClick={() => updateStatus(resource.id, "hidden")}
-                        className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                        onClick={() => removeResource(resource)}
+                        className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
                       >
-                        Hide
+                        Remove
                       </button>
-                    )}
-
-                    {resource.status === "hidden" && (
-                      <button
-                        onClick={() =>
-                          updateStatus(resource.id, "approved")
-                        }
-                        className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-                      >
-                        Unhide
-                      </button>
-                    )}
-
-                    <button
-                      onClick={() => removeResource(resource)}
-                      className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
-                    >
-                      Remove
-                    </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </article>
             ))}
           </div>
