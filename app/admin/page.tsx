@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type Resource = {
@@ -15,6 +16,7 @@ type Resource = {
   status: string;
   file_url: string;
   uploader_name: string | null;
+  rejection_reason: string | null;
 };
 
 type Review = {
@@ -31,11 +33,47 @@ type ReviewWithResource = Review & {
 };
 
 export default function AdminPage() {
+  const router = useRouter();
+
   const [resources, setResources] = useState<Resource[]>([]);
   const [reviews, setReviews] = useState<ReviewWithResource[]>([]);
   const [loading, setLoading] = useState(true);
   const [reviewsLoading, setReviewsLoading] = useState(true);
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    async function checkAdmin() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.replace("/admin-login");
+        return;
+      }
+
+      const { data: profile, error } = await supabase
+        .from("profiles")
+        .select("role, status")
+        .eq("id", user.id)
+        .single();
+
+      if (error || !profile) {
+        router.replace("/");
+        return;
+      }
+
+      if (profile.role !== "admin" || profile.status !== "active") {
+        router.replace("/");
+        return;
+      }
+
+      loadResources();
+      loadReviews();
+    }
+
+    checkAdmin();
+  }, [router]);
 
   async function loadResources() {
     setLoading(true);
@@ -114,17 +152,29 @@ export default function AdminPage() {
     setReviewsLoading(false);
   }
 
-  useEffect(() => {
-    loadResources();
-    loadReviews();
-  }, []);
-
-  async function updateStatus(id: number, status: string) {
+  async function updateStatus(
+    id: number,
+    status: string,
+    rejectionReason: string | null = null
+  ) {
     setMessage("");
+
+    const updateData: {
+      status: string;
+      rejection_reason?: string | null;
+    } = {
+      status,
+    };
+
+    if (status === "rejected") {
+      updateData.rejection_reason = rejectionReason;
+    } else {
+      updateData.rejection_reason = null;
+    }
 
     const { error } = await supabase
       .from("resources")
-      .update({ status })
+      .update(updateData)
       .eq("id", id);
 
     if (error) {
@@ -138,13 +188,19 @@ export default function AdminPage() {
         current.filter((resource) => resource.id !== id)
       );
 
-      setMessage("Resource rejected.");
+      setMessage("Resource rejected and reason saved.");
       return;
     }
 
     setResources((current) =>
       current.map((resource) =>
-        resource.id === id ? { ...resource, status } : resource
+        resource.id === id
+          ? {
+              ...resource,
+              status,
+              rejection_reason: null,
+            }
+          : resource
       )
     );
 
@@ -153,6 +209,25 @@ export default function AdminPage() {
     } else if (status === "hidden") {
       setMessage("Resource hidden.");
     }
+  }
+
+  async function rejectResource(resource: Resource) {
+    const reason = window.prompt(
+      `Why are you rejecting "${resource.title}"?\n\nEnter the reason the student should see:`
+    );
+
+    if (reason === null) {
+      return;
+    }
+
+    const trimmedReason = reason.trim();
+
+    if (!trimmedReason) {
+      setMessage("Please enter a rejection reason.");
+      return;
+    }
+
+    await updateStatus(resource.id, "rejected", trimmedReason);
   }
 
   async function removeResource(resource: Resource) {
@@ -355,9 +430,7 @@ export default function AdminPage() {
                         </button>
 
                         <button
-                          onClick={() =>
-                            updateStatus(resource.id, "rejected")
-                          }
+                          onClick={() => rejectResource(resource)}
                           className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600"
                         >
                           Reject
