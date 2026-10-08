@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "../../lib/supabase";
+import { supabase } from "@/lib/supabase";
 
 type Resource = {
   id: number;
@@ -17,250 +17,465 @@ type Resource = {
   uploader_name: string | null;
 };
 
+type Review = {
+  id: number;
+  created_at: string;
+  resource_id: number;
+  reviewer_name: string | null;
+  rating: number;
+  review_text: string | null;
+};
+
+type ReviewWithResource = Review & {
+  resource_title: string;
+};
+
 export default function AdminPage() {
   const [resources, setResources] = useState<Resource[]>([]);
+  const [reviews, setReviews] = useState<ReviewWithResource[]>([]);
   const [loading, setLoading] = useState(true);
+  const [reviewsLoading, setReviewsLoading] = useState(true);
   const [message, setMessage] = useState("");
 
   async function loadResources() {
     setLoading(true);
-    setMessage("");
 
     const { data, error } = await supabase
       .from("resources")
       .select("*")
-      .eq("status", "pending")
+      .in("status", ["pending", "approved", "hidden"])
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("ADMIN LOAD ERROR:", error);
-      setMessage("Could not load pending resources.");
-      setLoading(false);
+      console.error("Resource loading error:", error);
+      setMessage(`Could not load resources: ${error.message}`);
+    } else {
+      setResources(data || []);
+    }
+
+    setLoading(false);
+  }
+
+  async function loadReviews() {
+    setReviewsLoading(true);
+
+    const { data: reviewData, error: reviewError } = await supabase
+      .from("reviews")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (reviewError) {
+      console.error("Review loading error:", reviewError);
+      setMessage(`Could not load reviews: ${reviewError.message}`);
+      setReviewsLoading(false);
       return;
     }
 
-    setResources(data || []);
-    setLoading(false);
+    if (!reviewData || reviewData.length === 0) {
+      setReviews([]);
+      setReviewsLoading(false);
+      return;
+    }
+
+    const resourceIds = Array.from(
+      new Set(reviewData.map((review) => review.resource_id))
+    );
+
+    const { data: resourceData, error: resourceError } = await supabase
+      .from("resources")
+      .select("id, title")
+      .in("id", resourceIds);
+
+    if (resourceError) {
+      console.error("Review resource loading error:", resourceError);
+      setMessage(
+        `Could not load review resources: ${resourceError.message}`
+      );
+      setReviewsLoading(false);
+      return;
+    }
+
+    const resourceTitleMap = new Map<number, string>();
+
+    (resourceData || []).forEach((resource) => {
+      resourceTitleMap.set(resource.id, resource.title);
+    });
+
+    const reviewsWithResources: ReviewWithResource[] = reviewData.map(
+      (review) => ({
+        ...review,
+        resource_title:
+          resourceTitleMap.get(review.resource_id) ||
+          `Resource #${review.resource_id}`,
+      })
+    );
+
+    setReviews(reviewsWithResources);
+    setReviewsLoading(false);
   }
 
   useEffect(() => {
     loadResources();
+    loadReviews();
   }, []);
 
-  async function approveResource(id: number) {
+  async function updateStatus(id: number, status: string) {
+    setMessage("");
+
     const { error } = await supabase
       .from("resources")
-      .update({ status: "approved" })
+      .update({ status })
       .eq("id", id);
 
     if (error) {
-      console.error("APPROVE ERROR:", error);
-      setMessage("Could not approve this resource.");
+      console.error(error);
+      setMessage(`Could not update resource: ${error.message}`);
+      return;
+    }
+
+    if (status === "rejected") {
+      setResources((current) =>
+        current.filter((resource) => resource.id !== id)
+      );
+
+      setMessage("Resource rejected.");
       return;
     }
 
     setResources((current) =>
-      current.filter((resource) => resource.id !== id)
+      current.map((resource) =>
+        resource.id === id ? { ...resource, status } : resource
+      )
     );
 
-    setMessage("Resource approved successfully!");
+    if (status === "approved") {
+      setMessage("Resource approved.");
+    } else if (status === "hidden") {
+      setMessage("Resource hidden.");
+    }
   }
 
-  async function rejectResource(id: number) {
-    const { error } = await supabase
-      .from("resources")
-      .update({ status: "rejected" })
-      .eq("id", id);
+  async function removeResource(resource: Resource) {
+    const confirmed = window.confirm(
+      `Permanently remove "${resource.title}"? This cannot be undone.`
+    );
 
-    if (error) {
-      console.error("REJECT ERROR:", error);
-      setMessage("Could not reject this resource.");
+    if (!confirmed) return;
+
+    setMessage("");
+
+    try {
+      const fileUrl = new URL(resource.file_url);
+      const marker = "/storage/v1/object/public/resources/";
+      const markerIndex = fileUrl.pathname.indexOf(marker);
+
+      if (markerIndex !== -1) {
+        const filePath = decodeURIComponent(
+          fileUrl.pathname.substring(markerIndex + marker.length)
+        );
+
+        const { error: storageError } = await supabase.storage
+          .from("resources")
+          .remove([filePath]);
+
+        if (storageError) {
+          console.error("Storage deletion error:", storageError);
+        }
+      }
+    } catch (error) {
+      console.error("Could not determine storage file:", error);
+    }
+
+    const { error: databaseError } = await supabase
+      .from("resources")
+      .delete()
+      .eq("id", resource.id);
+
+    if (databaseError) {
+      console.error(databaseError);
+      setMessage(`Could not remove resource: ${databaseError.message}`);
       return;
     }
 
     setResources((current) =>
-      current.filter((resource) => resource.id !== id)
+      current.filter((item) => item.id !== resource.id)
     );
 
-    setMessage("Resource rejected.");
+    setMessage("Resource permanently removed.");
+
+    await loadReviews();
+  }
+
+  async function removeReview(review: ReviewWithResource) {
+    const confirmed = window.confirm(
+      `Remove the review by "${review.reviewer_name || "Student"}" from "${review.resource_title}"? This cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    setMessage("");
+
+    const { error } = await supabase
+      .from("reviews")
+      .delete()
+      .eq("id", review.id);
+
+    if (error) {
+      console.error("Review deletion error:", error);
+      setMessage(`Could not remove review: ${error.message}`);
+      return;
+    }
+
+    setReviews((current) =>
+      current.filter((item) => item.id !== review.id)
+    );
+
+    setMessage("Review removed.");
+  }
+
+  function statusLabel(status: string) {
+    if (status === "approved") return "APPROVED";
+    if (status === "hidden") return "HIDDEN";
+    return "PENDING";
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 px-6 py-10">
-      <div className="mx-auto max-w-6xl">
-        {/* Header */}
-        <div className="mb-8">
+    <main className="min-h-screen bg-slate-50 text-slate-900">
+      <header className="border-b bg-white">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
+          <div>
+            <h1 className="text-2xl font-bold">StudyShelf Admin</h1>
+            <p className="text-sm text-slate-500">
+              Manage submitted study resources
+            </p>
+          </div>
+
           <a
             href="/"
-            className="text-sm font-medium text-blue-600 hover:underline"
+            className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-slate-50"
           >
-            ← Back to StudyShelf
+            View StudyShelf
           </a>
-
-          <div className="mt-6 flex items-center justify-between">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">
-                StudyShelf Admin
-              </p>
-
-              <h1 className="mt-1 text-4xl font-bold text-gray-900">
-                Admin Dashboard
-              </h1>
-
-              <p className="mt-2 text-gray-600">
-                Review resources submitted by students.
-              </p>
-            </div>
-
-            <div className="rounded-xl bg-white px-5 py-4 shadow-sm">
-              <p className="text-sm text-gray-500">
-                Pending Resources
-              </p>
-
-              <p className="text-3xl font-bold text-gray-900">
-                {resources.length}
-              </p>
-            </div>
-          </div>
         </div>
+      </header>
 
-        {/* Message */}
+      <section className="mx-auto max-w-6xl px-6 py-8">
         {message && (
-          <div className="mb-6 rounded-xl bg-blue-50 p-4 text-sm font-medium text-blue-800">
+          <div className="mb-6 rounded-xl border bg-white px-4 py-3 text-sm">
             {message}
           </div>
         )}
 
-        {/* Loading */}
-        {loading && (
-          <div className="rounded-2xl bg-white p-10 text-center shadow-sm">
-            <p className="text-gray-600">
-              Loading pending resources...
+        <div className="mb-6">
+          <h2 className="text-xl font-bold">Resources</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Review, approve, reject, hide, or remove resources.
+          </p>
+        </div>
+
+        {loading ? (
+          <div className="rounded-2xl border bg-white p-8 text-center text-slate-500">
+            Loading resources...
+          </div>
+        ) : resources.length === 0 ? (
+          <div className="rounded-2xl border bg-white p-8 text-center">
+            <h3 className="font-semibold">No resources to manage</h3>
+            <p className="mt-2 text-sm text-slate-500">
+              New submissions will appear here.
             </p>
           </div>
-        )}
-
-        {/* No resources */}
-        {!loading && resources.length === 0 && (
-          <div className="rounded-2xl bg-white p-12 text-center shadow-sm">
-            <div className="text-5xl">🎉</div>
-
-            <h2 className="mt-4 text-2xl font-bold text-gray-900">
-              No pending resources
-            </h2>
-
-            <p className="mt-2 text-gray-600">
-              Everything has been reviewed.
-            </p>
-          </div>
-        )}
-
-        {/* Resource list */}
-        {!loading && resources.length > 0 && (
-          <div className="space-y-5">
+        ) : (
+          <div className="space-y-4">
             {resources.map((resource) => (
-              <div
+              <article
                 key={resource.id}
-                className="rounded-2xl bg-white p-6 shadow-sm"
+                className="rounded-2xl border bg-white p-6 shadow-sm"
               >
-                <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-                  {/* Resource information */}
-                  <div className="flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-800">
-                        PENDING
+                <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-bold ${
+                          resource.status === "approved"
+                            ? "bg-green-100 text-green-700"
+                            : resource.status === "hidden"
+                            ? "bg-slate-200 text-slate-700"
+                            : "bg-yellow-100 text-yellow-700"
+                        }`}
+                      >
+                        {statusLabel(resource.status)}
                       </span>
 
-                      <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800">
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
                         {resource.type}
                       </span>
                     </div>
 
-                    <h2 className="mt-3 text-2xl font-bold text-gray-900">
-                      {resource.title}
-                    </h2>
+                    <h3 className="text-lg font-bold">{resource.title}</h3>
+
+                    <p className="mt-2 text-sm text-slate-600">
+                      {resource.subject} • {resource.grade}
+                      {resource.topic ? ` • ${resource.topic}` : ""}
+                    </p>
 
                     {resource.description && (
-                      <p className="mt-2 text-gray-600">
+                      <p className="mt-3 text-sm text-slate-600">
                         {resource.description}
                       </p>
                     )}
 
-                    <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                      <div>
-                        <p className="text-xs font-semibold uppercase text-gray-400">
-                          Grade
-                        </p>
-                        <p className="mt-1 font-medium text-gray-900">
-                          {resource.grade}
-                        </p>
-                      </div>
-
-                      <div>
-                        <p className="text-xs font-semibold uppercase text-gray-400">
-                          Subject
-                        </p>
-                        <p className="mt-1 font-medium text-gray-900">
-                          {resource.subject}
-                        </p>
-                      </div>
-
-                      <div>
-                        <p className="text-xs font-semibold uppercase text-gray-400">
-                          Topic
-                        </p>
-                        <p className="mt-1 font-medium text-gray-900">
-                          {resource.topic || "—"}
-                        </p>
-                      </div>
-
-                      <div>
-                        <p className="text-xs font-semibold uppercase text-gray-400">
-                          Uploaded By
-                        </p>
-                        <p className="mt-1 font-medium text-gray-900">
-                          {resource.uploader_name || "Anonymous"}
-                        </p>
-                      </div>
+                    <div className="mt-4 text-xs text-slate-500">
+                      Uploaded by: {resource.uploader_name || "Anonymous"}
                     </div>
 
-                    <p className="mt-5 text-xs text-gray-400">
-                      Submitted{" "}
-                      {new Date(resource.created_at).toLocaleString()}
-                    </p>
+                    <div className="mt-1 text-xs text-slate-400">
+                      ID: {resource.id}
+                    </div>
                   </div>
 
-                  {/* Actions */}
-                  <div className="flex flex-col gap-3 lg:w-44">
+                  <div className="flex flex-wrap gap-2">
                     <a
                       href={resource.file_url}
                       target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded-lg border border-gray-300 px-4 py-3 text-center text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
+                      rel="noreferrer"
+                      className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-slate-50"
                     >
-                      Preview File
+                      Preview
                     </a>
 
-                    <button
-                      onClick={() => approveResource(resource.id)}
-                      className="rounded-lg bg-green-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-green-700"
-                    >
-                      ✓ Approve
-                    </button>
+                    {resource.status === "pending" && (
+                      <>
+                        <button
+                          onClick={() =>
+                            updateStatus(resource.id, "approved")
+                          }
+                          className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+                        >
+                          Approve
+                        </button>
+
+                        <button
+                          onClick={() =>
+                            updateStatus(resource.id, "rejected")
+                          }
+                          className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600"
+                        >
+                          Reject
+                        </button>
+                      </>
+                    )}
+
+                    {resource.status === "approved" && (
+                      <button
+                        onClick={() => updateStatus(resource.id, "hidden")}
+                        className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                      >
+                        Hide
+                      </button>
+                    )}
+
+                    {resource.status === "hidden" && (
+                      <button
+                        onClick={() =>
+                          updateStatus(resource.id, "approved")
+                        }
+                        className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                      >
+                        Unhide
+                      </button>
+                    )}
 
                     <button
-                      onClick={() => rejectResource(resource.id)}
-                      className="rounded-lg bg-red-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-700"
+                      onClick={() => removeResource(resource)}
+                      className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
                     >
-                      ✕ Reject
+                      Remove
                     </button>
                   </div>
                 </div>
-              </div>
+              </article>
             ))}
           </div>
         )}
-      </div>
+
+        <div className="mb-6 mt-14">
+          <h2 className="text-xl font-bold">Reviews</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Manage student reviews submitted on resources.
+          </p>
+        </div>
+
+        {reviewsLoading ? (
+          <div className="rounded-2xl border bg-white p-8 text-center text-slate-500">
+            Loading reviews...
+          </div>
+        ) : reviews.length === 0 ? (
+          <div className="rounded-2xl border bg-white p-8 text-center">
+            <h3 className="font-semibold">No reviews yet</h3>
+            <p className="mt-2 text-sm text-slate-500">
+              Student reviews will appear here.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {reviews.map((review) => (
+              <article
+                key={review.id}
+                className="rounded-2xl border bg-white p-6 shadow-sm"
+              >
+                <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                      Review for
+                    </p>
+
+                    <h3 className="mt-1 text-lg font-bold">
+                      {review.resource_title}
+                    </h3>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <span className="font-semibold">
+                        {review.reviewer_name || "Anonymous"}
+                      </span>
+
+                      <span className="text-lg tracking-wide">
+                        <span className="text-yellow-400">
+                          {"★".repeat(review.rating)}
+                        </span>
+                        <span className="text-slate-300">
+                          {"★".repeat(5 - review.rating)}
+                        </span>
+                      </span>
+
+                      <span className="text-sm text-slate-500">
+                        {review.rating}/5
+                      </span>
+                    </div>
+
+                    {review.review_text && (
+                      <p className="mt-4 rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+                        {review.review_text}
+                      </p>
+                    )}
+
+                    <div className="mt-3 text-xs text-slate-400">
+                      Review ID: {review.id} • Resource ID:{" "}
+                      {review.resource_id}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => removeReview(review)}
+                    className="shrink-0 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                  >
+                    Remove Review
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
     </main>
   );
 }
