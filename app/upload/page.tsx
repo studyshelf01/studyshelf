@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -36,7 +37,6 @@ function toTitleCase(value: string) {
 
 function detectGrade(text: string) {
   const normalized = normalizeText(text);
-
   const match = normalized.match(
     /\b(?:grade|class|std|standard)\s*(7|8|9|10|11|12)\b/
   );
@@ -65,7 +65,6 @@ function detectGrade(text: string) {
   );
 
   if (filenameGrade) return `Grade ${filenameGrade[1]}`;
-
   return "";
 }
 
@@ -147,6 +146,8 @@ function romanToNumber(value: string): number | null {
     X: 10,
     L: 50,
     C: 100,
+    D: 500,
+    M: 1000,
   };
 
   if (!/^[IVXLCDM]+$/.test(roman)) return null;
@@ -156,7 +157,6 @@ function romanToNumber(value: string): number | null {
   for (let i = 0; i < roman.length; i++) {
     const current = values[roman[i]];
     const next = values[roman[i + 1]] || 0;
-
     total += current < next ? -current : current;
   }
 
@@ -166,23 +166,20 @@ function romanToNumber(value: string): number | null {
 function detectChapterFromFilename(fileName: string): Chapter | null {
   const name = cleanFilename(fileName);
 
-  const chapterPatterns = [
-    /\b(?:chapter|chap|ch)\.?\s*0?(\d{1,2}|[ivxlcdm]{1,8})\b\s*[-:.)–—]?\s*(.*)$/i,
-  ];
+  const pattern =
+    /\b(?:chapter|chap|ch)\.?\s*0?(\d{1,2}|[ivxlcdm]{1,8})\b\s*[-:.)–—]?\s*(.*)$/i;
 
-  for (const pattern of chapterPatterns) {
-    const match = name.match(pattern);
+  const match = name.match(pattern);
 
-    if (match) {
-      const number = romanToNumber(match[1]);
-      const title = cleanChapterTitle(match[2] || "");
+  if (match) {
+    const number = romanToNumber(match[1]);
+    const title = cleanChapterTitle(match[2] || "");
 
-      if (number !== null) {
-        return {
-          number: String(number),
-          title: title.length >= 3 ? toTitleCase(title) : "",
-        };
-      }
+    if (number !== null) {
+      return {
+        number: String(number),
+        title: title.length >= 3 ? toTitleCase(title) : "",
+      };
     }
   }
 
@@ -190,23 +187,18 @@ function detectChapterFromFilename(fileName: string): Chapter | null {
 
   if (subject) {
     const escapedSubject = subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
     const subjectPattern = new RegExp(
       `\\b${escapedSubject}\\b\\s+0?(\\d{1,2})\\s+(.+)$`,
       "i"
     );
+    const subjectMatch = name.match(subjectPattern);
 
-    const match = name.match(subjectPattern);
-
-    if (match) {
-      const number = Number(match[1]);
-      const title = cleanChapterTitle(match[2]);
+    if (subjectMatch) {
+      const number = Number(subjectMatch[1]);
+      const title = cleanChapterTitle(subjectMatch[2]);
 
       if (number >= 1 && number <= 99 && title.length >= 3) {
-        return {
-          number: String(number),
-          title: toTitleCase(title),
-        };
+        return { number: String(number), title: toTitleCase(title) };
       }
     }
   }
@@ -229,10 +221,7 @@ function detectChapterFromFilename(fileName: string): Chapter | null {
       );
 
       if (title.length >= 3) {
-        return {
-          number: String(number),
-          title: toTitleCase(title),
-        };
+        return { number: String(number), title: toTitleCase(title) };
       }
     }
   }
@@ -257,9 +246,7 @@ function isBoilerplateLine(line: string) {
     return true;
   }
 
-  if (
-    /\b(?:page|copyright|all rights reserved|www\.|http|email)\b/i.test(line)
-  ) {
+  if (/\b(?:page|copyright|all rights reserved|www\.|http|email)\b/i.test(line)) {
     return true;
   }
 
@@ -287,22 +274,13 @@ function detectRealChapterTitle(text: string, subject: string) {
     );
 
     if (isBoilerplateLine(line)) continue;
-
-    if (normalizedSubject && normalizeText(line) === normalizedSubject) {
-      continue;
-    }
-
-    if (/^(?:chapter|chap|ch)\.?\s*\d+\s*$/i.test(line)) {
-      continue;
-    }
-
+    if (normalizedSubject && normalizeText(line) === normalizedSubject) continue;
+    if (/^(?:chapter|chap|ch)\.?\s*\d+\s*$/i.test(line)) continue;
     if (line.length < 4 || line.length > 110) continue;
     if (/[.!?]$/.test(line)) continue;
 
     if (
-      /\b(?:syllabus scope|study method|table of contents|contents and how|learning objectives)\b/i.test(
-        line
-      )
+      /\b(?:syllabus scope|study method|table of contents|contents and how|learning objectives)\b/i.test(line)
     ) {
       continue;
     }
@@ -323,9 +301,7 @@ function detectChapterInText(text: string): Chapter | null {
     /^\s*(?:chapter|chap\.?|ch\.?)\s*(\d{1,2}|[ivxlcdm]{1,8})\s*(?:[-:.)–—]\s*)?(.*)$/i;
 
   for (let i = 0; i < Math.min(lines.length, 80); i++) {
-    const line = lines[i];
-    const match = line.match(pattern);
-
+    const match = lines[i].match(pattern);
     if (!match) continue;
 
     const number = romanToNumber(match[1]);
@@ -375,103 +351,7 @@ function resolveChapter(
 
 function buildTopic(chapter: Chapter | null, subject: string) {
   if (!chapter?.number || !chapter.title || !subject) return "";
-
   return `${subject} Chapter ${chapter.number} – ${chapter.title}`;
-}
-
-function buildTitle(
-  chapter: Chapter | null,
-  grade: string,
-  subject: string,
-  fileName: string,
-  firstPageText: string
-) {
-  const gradeNumber = grade.match(/\d+/)?.[0];
-
-  if (chapter?.number && chapter.title && gradeNumber && subject) {
-    return `CBSE Class ${gradeNumber} ${subject} Chapter ${chapter.number} – ${chapter.title}`;
-  }
-
-  if (chapter?.number && chapter.title && subject) {
-    return `${subject} Chapter ${chapter.number} – ${chapter.title}`;
-  }
-
-  return suggestTitle(fileName, firstPageText);
-}
-
-function detectType(
-  fileName: string,
-  firstPageText: string,
-  pdfText: string
-) {
-  const filename = normalizeText(fileName.replace(/\.[^.]+$/, ""));
-
-  const firstLines = firstPageText
-    .split(/\r?\n/)
-    .map((line) => normalizeText(line))
-    .filter(Boolean)
-    .slice(0, 12)
-    .join(" ");
-
-  const firstPage = normalizeText(firstPageText);
-  const body = normalizeText(pdfText);
-
-  const scores: Record<string, number> = {
-    Notes: 0,
-    Assignment: 0,
-    Practice: 0,
-    Flashcards: 0,
-  };
-
-  const rules: Record<string, { pattern: RegExp; points: number }[]> = {
-    Notes: [
-      {
-        pattern: /\b(?:revision notes|study notes|class notes|lecture notes)\b/,
-        points: 5,
-      },
-      { pattern: /\bnotes\b/, points: 4 },
-      { pattern: /\b(?:study guide|summary)\b/, points: 3 },
-    ],
-    Assignment: [
-      { pattern: /\b(?:assignment|homework|classwork)\b/, points: 5 },
-    ],
-    Practice: [
-      {
-        pattern:
-          /\b(?:practice worksheet|practice paper|question paper|sample paper|past paper|previous year questions|pyq|question bank|worksheet)\b/,
-        points: 5,
-      },
-      { pattern: /\bpractice\b/, points: 4 },
-    ],
-    Flashcards: [{ pattern: /\bflashcards?\b/, points: 5 }],
-  };
-
-  for (const [typeName, typeRules] of Object.entries(rules)) {
-    for (const rule of typeRules) {
-      if (rule.pattern.test(filename)) scores[typeName] += rule.points;
-      if (rule.pattern.test(firstLines)) scores[typeName] += rule.points;
-    }
-  }
-
-  if (/\bnotes\b/.test(firstPage)) scores.Notes += 1;
-  if (/\bassignment\b/.test(firstPage)) scores.Assignment += 1;
-  if (/\b(?:practice|exercises|worksheet)\b/.test(firstPage))
-    scores.Practice += 1;
-  if (/\bflashcards?\b/.test(firstPage)) scores.Flashcards += 1;
-
-  if (/\bnotes\b/.test(body)) scores.Notes += 1;
-  if (/\bassignment\b/.test(body)) scores.Assignment += 1;
-  if (/\b(?:practice|exercises|worksheet)\b/.test(body))
-    scores.Practice += 1;
-  if (/\bflashcards?\b/.test(body)) scores.Flashcards += 1;
-
-  const ranked = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-  const best = ranked[0];
-
-  if (!best || best[1] < 4) return "";
-  if (ranked[1] && ranked[1][1] === best[1]) return "";
-
-  return best[0];
 }
 
 function suggestTitle(fileName: string, firstPageText: string) {
@@ -500,6 +380,90 @@ function suggestTitle(fileName: string, firstPageText: string) {
   return firstLine || "";
 }
 
+function buildTitle(
+  chapter: Chapter | null,
+  grade: string,
+  subject: string,
+  fileName: string,
+  firstPageText: string
+) {
+  const gradeNumber = grade.match(/\d+/)?.[0];
+
+  if (chapter?.number && chapter.title && gradeNumber && subject) {
+    return `CBSE Class ${gradeNumber} ${subject} Chapter ${chapter.number} – ${chapter.title}`;
+  }
+
+  if (chapter?.number && chapter.title && subject) {
+    return `${subject} Chapter ${chapter.number} – ${chapter.title}`;
+  }
+
+  return suggestTitle(fileName, firstPageText);
+}
+
+function detectType(fileName: string, firstPageText: string, pdfText: string) {
+  const filename = normalizeText(fileName.replace(/\.[^.]+$/, ""));
+  const firstLines = firstPageText
+    .split(/\r?\n/)
+    .map((line) => normalizeText(line))
+    .filter(Boolean)
+    .slice(0, 12)
+    .join(" ");
+
+  const firstPage = normalizeText(firstPageText);
+  const body = normalizeText(pdfText);
+
+  const scores: Record<string, number> = {
+    Notes: 0,
+    Assignment: 0,
+    Practice: 0,
+    Flashcards: 0,
+  };
+
+  const rules: Record<string, { pattern: RegExp; points: number }[]> = {
+    Notes: [
+      { pattern: /\b(?:revision notes|study notes|class notes|lecture notes)\b/, points: 5 },
+      { pattern: /\bnotes\b/, points: 4 },
+      { pattern: /\b(?:study guide|summary)\b/, points: 3 },
+    ],
+    Assignment: [
+      { pattern: /\b(?:assignment|homework|classwork)\b/, points: 5 },
+    ],
+    Practice: [
+      {
+        pattern: /\b(?:practice worksheet|practice paper|question paper|sample paper|past paper|previous year questions|pyq|question bank|worksheet)\b/,
+        points: 5,
+      },
+      { pattern: /\bpractice\b/, points: 4 },
+    ],
+    Flashcards: [{ pattern: /\bflashcards?\b/, points: 5 }],
+  };
+
+  for (const [typeName, typeRules] of Object.entries(rules)) {
+    for (const rule of typeRules) {
+      if (rule.pattern.test(filename)) scores[typeName] += rule.points;
+      if (rule.pattern.test(firstLines)) scores[typeName] += rule.points;
+    }
+  }
+
+  if (/\bnotes\b/.test(firstPage)) scores.Notes += 1;
+  if (/\bassignment\b/.test(firstPage)) scores.Assignment += 1;
+  if (/\b(?:practice|exercises|worksheet)\b/.test(firstPage)) scores.Practice += 1;
+  if (/\bflashcards?\b/.test(firstPage)) scores.Flashcards += 1;
+
+  if (/\bnotes\b/.test(body)) scores.Notes += 1;
+  if (/\bassignment\b/.test(body)) scores.Assignment += 1;
+  if (/\b(?:practice|exercises|worksheet)\b/.test(body)) scores.Practice += 1;
+  if (/\bflashcards?\b/.test(body)) scores.Flashcards += 1;
+
+  const ranked = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  const best = ranked[0];
+
+  if (!best || best[1] < 4) return "";
+  if (ranked[1] && ranked[1][1] === best[1]) return "";
+
+  return best[0];
+}
+
 function detectMetadata(
   fileName: string,
   pdfText: string,
@@ -507,7 +471,6 @@ function detectMetadata(
 ): Suggestions {
   const grade = detectGrade(fileName) || detectGrade(pdfText);
   const subject = detectSubject(fileName) || detectSubject(pdfText);
-
   const chapter = resolveChapter(fileName, pdfText, firstPageText);
 
   const realTitle =
@@ -519,13 +482,7 @@ function detectMetadata(
     chapter && realTitle ? { ...chapter, title: realTitle } : chapter;
 
   return {
-    title: buildTitle(
-      effectiveChapter,
-      grade,
-      subject,
-      fileName,
-      firstPageText
-    ),
+    title: buildTitle(effectiveChapter, grade, subject, fileName, firstPageText),
     grade,
     subject,
     topic: buildTopic(effectiveChapter, subject),
@@ -578,28 +535,23 @@ export default function UploadPage() {
           return;
         }
 
-        if (profile.role === "admin" && profile.status === "active") {
-          router.replace("/admin");
-          return;
-        }
-
-        if (profile.role !== "student" || profile.status !== "active") {
+        // Allow active students and active admins (including the owner).
+        if (
+          profile.status !== "active" ||
+          (profile.role !== "student" && profile.role !== "admin")
+        ) {
           await supabase.auth.signOut();
           router.replace("/student-login");
           return;
         }
 
-        if (!cancelled) {
-          setCanUpload(true);
-        }
+        if (!cancelled) setCanUpload(true);
       } catch (error) {
         console.error("UPLOAD ACCESS CHECK ERROR:", error);
         await supabase.auth.signOut();
         router.replace("/student-login");
       } finally {
-        if (!cancelled) {
-          setIsCheckingAccess(false);
-        }
+        if (!cancelled) setIsCheckingAccess(false);
       }
     }
 
@@ -610,16 +562,13 @@ export default function UploadPage() {
     };
   }, [router]);
 
-  async function handleFileChange(
-    e: React.ChangeEvent<HTMLInputElement>
-  ) {
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const selectedFile = e.target.files?.[0] || null;
 
     setFile(selectedFile);
     setMessage("");
 
     if (!selectedFile) return;
-
     if (!selectedFile.name.toLowerCase().endsWith(".pdf")) return;
 
     setTitle("");
@@ -655,9 +604,7 @@ export default function UploadPage() {
 
           if (pageText) {
             pageText +=
-              previousY !== null && Math.abs(y - previousY) > 3
-                ? "\n"
-                : " ";
+              previousY !== null && Math.abs(y - previousY) > 3 ? "\n" : " ";
           }
 
           pageText += item.str;
@@ -683,22 +630,17 @@ export default function UploadPage() {
       if (suggestions.type) setType(suggestions.type);
 
       const detectedFields: string[] = [];
-
       if (suggestions.title) detectedFields.push("title");
       if (suggestions.grade) detectedFields.push("grade");
       if (suggestions.subject) detectedFields.push("subject");
       if (suggestions.topic) detectedFields.push("topic");
       if (suggestions.type) detectedFields.push("resource type");
 
-      if (detectedFields.length) {
-        setMessage(
-          `PDF analyzed. Suggested ${detectedFields.join(", ")}. Please review the fields before submitting.`
-        );
-      } else {
-        setMessage(
-          "PDF analyzed, but no reliable metadata suggestions were found. Please fill in the fields manually."
-        );
-      }
+      setMessage(
+        detectedFields.length
+          ? `PDF analyzed. Suggested ${detectedFields.join(", ")}. Please review the fields before submitting.`
+          : "PDF analyzed, but no reliable metadata suggestions were found. Please fill in the fields manually."
+      );
     } catch (error) {
       console.error("PDF METADATA DETECTION ERROR:", error);
       setMessage(
@@ -731,6 +673,8 @@ export default function UploadPage() {
 
     setIsUploading(true);
 
+    let uploadedFilePath: string | null = null;
+
     try {
       const {
         data: { user },
@@ -742,7 +686,7 @@ export default function UploadPage() {
         return;
       }
 
-      // Recheck the profile immediately before allowing an upload.
+      // Recheck role and status immediately before upload.
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("role, status")
@@ -752,11 +696,10 @@ export default function UploadPage() {
       if (
         profileError ||
         !profile ||
-        profile.role !== "student" ||
+        (profile.role !== "student" && profile.role !== "admin") ||
         profile.status !== "active"
       ) {
-        await supabase.auth.signOut();
-        router.replace("/student-login");
+        setMessage("Your account is not permitted to upload resources.");
         return;
       }
 
@@ -771,38 +714,48 @@ export default function UploadPage() {
 
       if (storageError) {
         console.error("SUPABASE STORAGE ERROR:", storageError);
-        setMessage("File upload failed: " + JSON.stringify(storageError));
+        setMessage(`File upload failed: ${storageError.message}`);
         return;
       }
+
+      uploadedFilePath = safeFileName;
 
       const {
         data: { publicUrl },
       } = supabase.storage.from("resources").getPublicUrl(safeFileName);
 
-      const { error: databaseError } = await supabase
-        .from("resources")
-        .insert({
-          title: title.trim(),
-          description,
-          grade,
-          subject: subject.trim(),
-          topic,
-          type,
-          file_url: publicUrl,
-          uploader_name: uploaderName,
-          user_id: user.id,
-          status: "pending",
-        });
+      const { error: databaseError } = await supabase.from("resources").insert({
+        title: title.trim(),
+        description: description.trim() || null,
+        grade,
+        subject: subject.trim(),
+        topic: topic.trim() || null,
+        type,
+        file_url: publicUrl,
+        uploader_name: uploaderName.trim() || null,
+        user_id: user.id,
+        status: "pending",
+      });
 
       if (databaseError) {
         console.error("SUPABASE DATABASE ERROR:", databaseError);
-        setMessage("Database error: " + JSON.stringify(databaseError));
+
+        // Clean up the uploaded file if saving its database row failed.
+        const { error: cleanupError } = await supabase.storage
+          .from("resources")
+          .remove([safeFileName]);
+
+        if (cleanupError) {
+          console.error("UPLOAD CLEANUP ERROR:", cleanupError);
+        }
+
+        uploadedFilePath = null;
+        setMessage(`Database error: ${databaseError.message}`);
         return;
       }
 
-      setMessage(
-        "Success! Your resource has been submitted for admin approval."
-      );
+      uploadedFilePath = null;
+      setMessage("Success! Your resource has been submitted for admin approval.");
 
       setFile(null);
       setTitle("");
@@ -816,8 +769,20 @@ export default function UploadPage() {
       const fileInput = document.getElementById("file") as HTMLInputElement;
       if (fileInput) fileInput.value = "";
     } catch (error) {
-      console.error("UNEXPECTED ERROR:", error);
-      setMessage("Something went wrong: " + String(error));
+      console.error("UNEXPECTED UPLOAD ERROR:", error);
+
+      // Best-effort cleanup if an unexpected error occurred after file upload.
+      if (uploadedFilePath) {
+        const { error: cleanupError } = await supabase.storage
+          .from("resources")
+          .remove([uploadedFilePath]);
+
+        if (cleanupError) {
+          console.error("UPLOAD CLEANUP ERROR:", cleanupError);
+        }
+      }
+
+      setMessage("Something went wrong while uploading. Please try again.");
     } finally {
       setIsUploading(false);
     }
@@ -827,7 +792,7 @@ export default function UploadPage() {
     return (
       <main className="flex min-h-screen items-center justify-center bg-gray-50 px-6 py-12">
         <p className="text-center text-gray-600">
-          Checking your student account...
+          Checking your account permissions...
         </p>
       </main>
     );
@@ -849,8 +814,8 @@ export default function UploadPage() {
           </h1>
 
           <p className="mt-2 text-gray-600">
-            Share your notes, assignments, practice questions, or
-            other study resources with students.
+            Share your notes, assignments, practice questions, or other study
+            resources with students.
           </p>
         </div>
 
@@ -872,6 +837,7 @@ export default function UploadPage() {
               onChange={handleFileChange}
               className="block w-full rounded-lg border border-gray-300 bg-white p-3 text-sm"
               accept=".pdf,.doc,.docx,.ppt,.pptx,.jpg,.jpeg,.png"
+              required
             />
 
             <p className="mt-2 text-xs text-gray-500">
@@ -886,7 +852,6 @@ export default function UploadPage() {
             >
               Title *
             </label>
-
             <input
               id="title"
               type="text"
@@ -905,7 +870,6 @@ export default function UploadPage() {
             >
               Description
             </label>
-
             <textarea
               id="description"
               value={description}
@@ -923,7 +887,6 @@ export default function UploadPage() {
             >
               Grade *
             </label>
-
             <select
               id="grade"
               value={grade}
@@ -948,7 +911,6 @@ export default function UploadPage() {
             >
               Subject *
             </label>
-
             <input
               id="subject"
               type="text"
@@ -967,7 +929,6 @@ export default function UploadPage() {
             >
               Topic
             </label>
-
             <input
               id="topic"
               type="text"
@@ -985,7 +946,6 @@ export default function UploadPage() {
             >
               Resource Type *
             </label>
-
             <select
               id="type"
               value={type}
@@ -1009,7 +969,6 @@ export default function UploadPage() {
             >
               Your Name
             </label>
-
             <input
               id="uploaderName"
               type="text"
@@ -1021,10 +980,10 @@ export default function UploadPage() {
           </div>
 
           <div className="rounded-lg bg-yellow-50 p-4 text-sm text-yellow-800">
-            <strong>Before uploading:</strong> Only share resources
-            that you created yourself or have permission to share.
-            Please do not upload textbooks, paid worksheets, teacher
-            materials, or copyrighted files without permission.
+            <strong>Before uploading:</strong> Only share resources that you
+            created yourself or have permission to share. Please do not upload
+            textbooks, paid worksheets, teacher materials, or copyrighted files
+            without permission.
           </div>
 
           {message && (
