@@ -38,6 +38,9 @@ export default function ResourcePage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
+  const [isSaved, setIsSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+
   useEffect(() => {
     async function loadResource() {
       const { data, error } = await supabase
@@ -55,6 +58,11 @@ export default function ResourcePage() {
 
       setResource(data);
 
+      // Count this resource view
+      await supabase.rpc("increment_resource_views", {
+        resource_id: Number(id),
+      });
+
       const { data: reviewData } = await supabase
         .from("reviews")
         .select("*")
@@ -62,11 +70,76 @@ export default function ResourcePage() {
         .order("created_at", { ascending: false });
 
       setReviews(reviewData || []);
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (user) {
+        const { data: savedData } = await supabase
+          .from("saved_resources")
+          .select("id")
+          .eq("user_id", user.id)
+          .eq("resource_id", Number(id))
+          .maybeSingle();
+
+        setIsSaved(!!savedData);
+      }
+
       setLoading(false);
     }
 
     loadResource();
   }, [id]);
+
+  async function toggleSave() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      setMessage("Please log in to save resources.");
+      return;
+    }
+
+    setSaving(true);
+    setMessage("");
+
+    if (isSaved) {
+      const { error } = await supabase
+        .from("saved_resources")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("resource_id", Number(id));
+
+      if (error) {
+        console.error("Unsave error:", error);
+        setMessage("Could not remove this resource from your saves.");
+        setSaving(false);
+        return;
+      }
+
+      setIsSaved(false);
+      setMessage("Resource removed from your saved resources.");
+    } else {
+      const { error } = await supabase.from("saved_resources").insert({
+        user_id: user.id,
+        resource_id: Number(id),
+      });
+
+      if (error) {
+        console.error("Save error:", error);
+        setMessage("Could not save this resource. Please try again.");
+        setSaving(false);
+        return;
+      }
+
+      setIsSaved(true);
+      setMessage("Resource saved!");
+    }
+
+    setSaving(false);
+  }
 
   async function submitReview(e: React.FormEvent) {
     e.preventDefault();
@@ -141,6 +214,7 @@ export default function ResourcePage() {
           <h1 className="text-3xl font-bold text-slate-900">
             Resource not found
           </h1>
+
           <p className="mt-3 text-slate-600">
             This resource may have been removed or hidden.
           </p>
@@ -233,7 +307,9 @@ export default function ResourcePage() {
               </div>
 
               <div className="mt-1 text-lg">
-                {reviews.length > 0 ? "⭐".repeat(Math.round(averageRating)) : "☆☆☆☆☆"}
+                {reviews.length > 0
+                  ? "⭐".repeat(Math.round(averageRating))
+                  : "☆☆☆☆☆"}
               </div>
 
               <p className="mt-1 text-sm text-slate-500">
@@ -243,14 +319,36 @@ export default function ResourcePage() {
             </div>
           </div>
 
-          <a
-            href={resource.file_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-8 inline-flex rounded-xl bg-slate-900 px-6 py-3 font-semibold text-white hover:bg-slate-800"
-          >
-            Open PDF
-          </a>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <a
+              href={resource.file_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex rounded-xl bg-slate-900 px-6 py-3 font-semibold text-white hover:bg-slate-800"
+            >
+              Open PDF
+            </a>
+
+            <button
+              onClick={toggleSave}
+              disabled={saving}
+              className={`inline-flex items-center rounded-xl px-6 py-3 font-semibold transition ${
+                isSaved
+                  ? "bg-yellow-100 text-yellow-800 hover:bg-yellow-200"
+                  : "border bg-white text-slate-900 hover:bg-slate-50"
+              } disabled:opacity-50`}
+            >
+              {saving
+                ? "Saving..."
+                : isSaved
+                ? "⭐ Saved"
+                : "☆ Save Resource"}
+            </button>
+          </div>
+
+          {message && (
+            <p className="mt-4 text-sm text-slate-600">{message}</p>
+          )}
         </section>
 
         <section className="mt-8 grid gap-8 md:grid-cols-2">
@@ -317,10 +415,6 @@ export default function ResourcePage() {
               >
                 {submitting ? "Submitting..." : "Submit Review"}
               </button>
-
-              {message && (
-                <p className="text-sm text-slate-600">{message}</p>
-              )}
             </form>
           </div>
 
