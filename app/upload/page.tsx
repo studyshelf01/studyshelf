@@ -1,7 +1,7 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 
 type Suggestions = {
@@ -60,7 +60,6 @@ function detectGrade(text: string) {
     return grades[romanMatch[1]] || "";
   }
 
-  // Support common filename patterns such as "biology class 12".
   const filenameGrade = normalized.match(
     /\b(7|8|9|10|11|12)\s*(?:th|st|nd|rd)?\s*grade\b/
   );
@@ -115,11 +114,7 @@ function detectSubject(text: string) {
     Science: /\bscience\b/,
   };
 
-  // Check longer subject names first to avoid matching a generic subject
-  // when a more specific subject is present.
-  return (
-    SUBJECTS.find((subject) => patterns[subject]?.test(normalized)) || ""
-  );
+  return SUBJECTS.find((subject) => patterns[subject]?.test(normalized)) || "";
 }
 
 function cleanChapterTitle(value: string) {
@@ -168,10 +163,6 @@ function romanToNumber(value: string): number | null {
   return total >= 1 && total <= 99 ? total : null;
 }
 
-// Extract a chapter number and title from filenames such as:
-// "Biology 02 Human Reproduction.pdf"
-// "Biology Chapter 2 - Human Reproduction.pdf"
-// "Class 12 Biology Ch. 2 Human Reproduction.pdf"
 function detectChapterFromFilename(fileName: string): Chapter | null {
   const name = cleanFilename(fileName);
 
@@ -195,14 +186,10 @@ function detectChapterFromFilename(fileName: string): Chapter | null {
     }
   }
 
-  // Support subject-first filenames, including subjects with multiple words.
   const subject = detectSubject(name);
 
   if (subject) {
-    const escapedSubject = subject.replace(
-      /[.*+?^${}()|[\]\\]/g,
-      "\\$&"
-    );
+    const escapedSubject = subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     const subjectPattern = new RegExp(
       `\\b${escapedSubject}\\b\\s+0?(\\d{1,2})\\s+(.+)$`,
@@ -224,11 +211,7 @@ function detectChapterFromFilename(fileName: string): Chapter | null {
     }
   }
 
-  // Also support filenames that put the number first, such as:
-  // "02 Biology Human Reproduction.pdf"
-  const leadingNumber = name.match(
-    /^\s*0?(\d{1,2})\s+(.+)$/
-  );
+  const leadingNumber = name.match(/^\s*0?(\d{1,2})\s+(.+)$/);
 
   if (leadingNumber) {
     const number = Number(leadingNumber[1]);
@@ -290,8 +273,6 @@ function isBoilerplateLine(line: string) {
   return false;
 }
 
-// Finds a likely main title near the start of the PDF without hardcoding
-// one particular chapter name.
 function detectRealChapterTitle(text: string, subject: string) {
   const lines = text
     .split(/\r?\n/)
@@ -307,27 +288,21 @@ function detectRealChapterTitle(text: string, subject: string) {
 
     if (isBoilerplateLine(line)) continue;
 
-    if (
-      normalizedSubject &&
-      normalizeText(line) === normalizedSubject
-    ) {
+    if (normalizedSubject && normalizeText(line) === normalizedSubject) {
       continue;
     }
 
-    if (
-      /^(?:chapter|chap|ch)\.?\s*\d+\s*$/i.test(line)
-    ) {
+    if (/^(?:chapter|chap|ch)\.?\s*\d+\s*$/i.test(line)) {
       continue;
     }
 
     if (line.length < 4 || line.length > 110) continue;
-
-    // Avoid choosing a long sentence or an explanatory line as the title.
     if (/[.!?]$/.test(line)) continue;
 
-    // Avoid selecting lines that are likely descriptions or contents entries.
     if (
-      /\b(?:syllabus scope|study method|table of contents|contents and how|learning objectives)\b/i.test(line)
+      /\b(?:syllabus scope|study method|table of contents|contents and how|learning objectives)\b/i.test(
+        line
+      )
     ) {
       continue;
     }
@@ -338,8 +313,6 @@ function detectRealChapterTitle(text: string, subject: string) {
   return "";
 }
 
-// Looks for an explicit "Chapter 2 - Human Reproduction" heading.
-// It intentionally avoids guessing from arbitrary numbered contents entries.
 function detectChapterInText(text: string): Chapter | null {
   const lines = text
     .split(/\r?\n/)
@@ -391,13 +364,9 @@ function resolveChapter(
   const firstPageChapter = detectChapterInText(firstPageText);
   const documentChapter = detectChapterInText(pdfText);
 
-  // The filename often identifies the exact chapter when a PDF has
-  // a misleading table of contents. Prefer it when it includes a title.
   if (filenameChapter?.title) return filenameChapter;
-
   if (firstPageChapter?.title) return firstPageChapter;
   if (documentChapter?.title) return documentChapter;
-
   if (filenameChapter) return filenameChapter;
   if (firstPageChapter) return firstPageChapter;
 
@@ -468,14 +437,13 @@ function detectType(
     ],
     Practice: [
       {
-        pattern: /\b(?:practice worksheet|practice paper|question paper|sample paper|past paper|previous year questions|pyq|question bank|worksheet)\b/,
+        pattern:
+          /\b(?:practice worksheet|practice paper|question paper|sample paper|past paper|previous year questions|pyq|question bank|worksheet)\b/,
         points: 5,
       },
       { pattern: /\bpractice\b/, points: 4 },
     ],
-    Flashcards: [
-      { pattern: /\bflashcards?\b/, points: 5 },
-    ],
+    Flashcards: [{ pattern: /\bflashcards?\b/, points: 5 }],
   };
 
   for (const [typeName, typeRules] of Object.entries(rules)) {
@@ -487,12 +455,14 @@ function detectType(
 
   if (/\bnotes\b/.test(firstPage)) scores.Notes += 1;
   if (/\bassignment\b/.test(firstPage)) scores.Assignment += 1;
-  if (/\b(?:practice|exercises|worksheet)\b/.test(firstPage)) scores.Practice += 1;
+  if (/\b(?:practice|exercises|worksheet)\b/.test(firstPage))
+    scores.Practice += 1;
   if (/\bflashcards?\b/.test(firstPage)) scores.Flashcards += 1;
 
   if (/\bnotes\b/.test(body)) scores.Notes += 1;
   if (/\bassignment\b/.test(body)) scores.Assignment += 1;
-  if (/\b(?:practice|exercises|worksheet)\b/.test(body)) scores.Practice += 1;
+  if (/\b(?:practice|exercises|worksheet)\b/.test(body))
+    scores.Practice += 1;
   if (/\bflashcards?\b/.test(body)) scores.Flashcards += 1;
 
   const ranked = Object.entries(scores).sort((a, b) => b[1] - a[1]);
@@ -540,17 +510,13 @@ function detectMetadata(
 
   const chapter = resolveChapter(fileName, pdfText, firstPageText);
 
-  // Prefer a meaningful chapter title from the filename, then a matching
-  // explicit chapter heading, then a likely title near the start of the PDF.
   const realTitle =
     chapter?.title ||
     detectRealChapterTitle(firstPageText, subject) ||
     detectRealChapterTitle(pdfText, subject);
 
   const effectiveChapter =
-    chapter && realTitle
-      ? { ...chapter, title: realTitle }
-      : chapter;
+    chapter && realTitle ? { ...chapter, title: realTitle } : chapter;
 
   return {
     title: buildTitle(
@@ -568,6 +534,8 @@ function detectMetadata(
 }
 
 export default function UploadPage() {
+  const router = useRouter();
+
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -580,18 +548,67 @@ export default function UploadPage() {
   const [message, setMessage] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
+  const [isCheckingAccess, setIsCheckingAccess] = useState(true);
+  const [canUpload, setCanUpload] = useState(false);
 
   useEffect(() => {
-    async function checkLogin() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+    let cancelled = false;
 
-      if (!user) window.location.href = "/student-login";
+    async function checkAccess() {
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+
+        if (userError || !user) {
+          router.replace("/student-login");
+          return;
+        }
+
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("role, status")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (profileError || !profile) {
+          await supabase.auth.signOut();
+          router.replace("/student-login");
+          return;
+        }
+
+        if (profile.role === "admin" && profile.status === "active") {
+          router.replace("/admin");
+          return;
+        }
+
+        if (profile.role !== "student" || profile.status !== "active") {
+          await supabase.auth.signOut();
+          router.replace("/student-login");
+          return;
+        }
+
+        if (!cancelled) {
+          setCanUpload(true);
+        }
+      } catch (error) {
+        console.error("UPLOAD ACCESS CHECK ERROR:", error);
+        await supabase.auth.signOut();
+        router.replace("/student-login");
+      } finally {
+        if (!cancelled) {
+          setIsCheckingAccess(false);
+        }
+      }
     }
 
-    checkLogin();
-  }, []);
+    checkAccess();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   async function handleFileChange(
     e: React.ChangeEvent<HTMLInputElement>
@@ -603,12 +620,8 @@ export default function UploadPage() {
 
     if (!selectedFile) return;
 
-    // PDFs are analyzed automatically. Other supported file types
-    // can still be uploaded with manually entered metadata.
     if (!selectedFile.name.toLowerCase().endsWith(".pdf")) return;
 
-    // Clear the previous file's automatically populated metadata so it
-    // cannot accidentally carry over to a newly selected PDF.
     setTitle("");
     setGrade("");
     setSubject("");
@@ -696,7 +709,7 @@ export default function UploadPage() {
     }
   }
 
-  async function handleUpload(e: React.FormEvent) {
+  async function handleUpload(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     if (isDetecting) {
@@ -725,7 +738,25 @@ export default function UploadPage() {
       } = await supabase.auth.getUser();
 
       if (userError || !user) {
-        setMessage("You must be logged in to upload a resource.");
+        router.replace("/student-login");
+        return;
+      }
+
+      // Recheck the profile immediately before allowing an upload.
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role, status")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (
+        profileError ||
+        !profile ||
+        profile.role !== "student" ||
+        profile.status !== "active"
+      ) {
+        await supabase.auth.signOut();
+        router.replace("/student-login");
         return;
       }
 
@@ -751,10 +782,10 @@ export default function UploadPage() {
       const { error: databaseError } = await supabase
         .from("resources")
         .insert({
-          title,
+          title: title.trim(),
           description,
           grade,
-          subject,
+          subject: subject.trim(),
           topic,
           type,
           file_url: publicUrl,
@@ -790,6 +821,16 @@ export default function UploadPage() {
     } finally {
       setIsUploading(false);
     }
+  }
+
+  if (isCheckingAccess || !canUpload) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-gray-50 px-6 py-12">
+        <p className="text-center text-gray-600">
+          Checking your student account...
+        </p>
+      </main>
+    );
   }
 
   return (
@@ -852,6 +893,7 @@ export default function UploadPage() {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Example: CBSE Class 12 Biology Chapter 2 – Human Reproduction"
+              required
               className="w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-blue-500"
             />
           </div>
@@ -886,6 +928,7 @@ export default function UploadPage() {
               id="grade"
               value={grade}
               onChange={(e) => setGrade(e.target.value)}
+              required
               className="w-full rounded-lg border border-gray-300 bg-white p-3"
             >
               <option value="">Select grade</option>
@@ -912,6 +955,7 @@ export default function UploadPage() {
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               placeholder="Example: Biology"
+              required
               className="w-full rounded-lg border border-gray-300 p-3 outline-none focus:border-blue-500"
             />
           </div>
@@ -946,6 +990,7 @@ export default function UploadPage() {
               id="type"
               value={type}
               onChange={(e) => setType(e.target.value)}
+              required
               className="w-full rounded-lg border border-gray-300 bg-white p-3"
             >
               <option value="">Select type</option>
@@ -983,14 +1028,17 @@ export default function UploadPage() {
           </div>
 
           {message && (
-            <div className="rounded-lg bg-gray-100 p-4 text-sm text-gray-800">
+            <div
+              role="status"
+              className="rounded-lg bg-gray-100 p-4 text-sm text-gray-800"
+            >
               {message}
             </div>
           )}
 
           <button
             type="submit"
-            disabled={isUploading || isDetecting}
+            disabled={isUploading || isDetecting || isCheckingAccess}
             className="w-full rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-400"
           >
             {isDetecting

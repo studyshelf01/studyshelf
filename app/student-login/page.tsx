@@ -1,7 +1,9 @@
+
 "use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "../../lib/supabase";
 
 export default function StudentLoginPage() {
@@ -10,39 +12,91 @@ export default function StudentLoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState<"error" | "info">("error");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  async function handleLogin(e: React.FormEvent) {
+  async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     setMessage("");
+    setMessageType("error");
     setIsLoggingIn(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
 
-    if (error) {
-      console.error("Student login error:", error);
-      setMessage("Login failed. Please check your email and password.");
+      if (error || !data.user) {
+        setMessage(
+          error?.message.toLowerCase().includes("email not confirmed")
+            ? "Please confirm your email using the link we sent before logging in."
+            : "Login failed. Please check your email and password."
+        );
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role, status")
+        .eq("id", data.user.id)
+        .maybeSingle();
+
+      if (profileError || !profile) {
+        await supabase.auth.signOut();
+        setMessage(
+          "We couldn't verify your student profile. Please contact an administrator."
+        );
+        return;
+      }
+
+      if (profile.role !== "student") {
+        await supabase.auth.signOut();
+        setMessage("This login is for student accounts only.");
+        return;
+      }
+
+      if (profile.status !== "active") {
+        await supabase.auth.signOut();
+
+        if (profile.status === "pending") {
+          setMessageType("info");
+          setMessage(
+            "Your email is confirmed, but your account is waiting for administrator approval. Please try again after your account is approved."
+          );
+        } else if (profile.status === "rejected") {
+          setMessage(
+            "Your account was not approved. Please contact an administrator for assistance."
+          );
+        } else {
+          setMessage(
+            "Your account is not active. Please contact an administrator."
+          );
+        }
+
+        return;
+      }
+
+      router.push("/");
+      router.refresh();
+    } catch {
+      setMessage("Something went wrong. Please try again.");
+    } finally {
       setIsLoggingIn(false);
-      return;
     }
-
-    router.push("/");
   }
 
   return (
     <main className="min-h-screen bg-gray-50 px-6 py-12">
       <div className="mx-auto max-w-md">
         <div className="mb-8">
-          <a
+          <Link
             href="/"
             className="text-sm font-medium text-blue-600 hover:underline"
           >
             ← Back to StudyShelf
-          </a>
+          </Link>
 
           <h1 className="mt-6 text-4xl font-bold text-gray-900">
             Student Login
@@ -68,6 +122,7 @@ export default function StudentLoginPage() {
             <input
               id="email"
               type="email"
+              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="Enter your email"
@@ -87,6 +142,7 @@ export default function StudentLoginPage() {
             <input
               id="password"
               type="password"
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter your password"
@@ -96,7 +152,14 @@ export default function StudentLoginPage() {
           </div>
 
           {message && (
-            <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
+            <div
+              role="alert"
+              className={`rounded-lg p-4 text-sm ${
+                messageType === "info"
+                  ? "bg-blue-50 text-blue-800"
+                  : "bg-red-50 text-red-700"
+              }`}
+            >
               {message}
             </div>
           )}
@@ -106,9 +169,35 @@ export default function StudentLoginPage() {
             disabled={isLoggingIn}
             className="w-full rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-400"
           >
-            {isLoggingIn ? "Logging in..." : "Log In"}
+            {isLoggingIn ? "Checking account..." : "Log In"}
           </button>
+
+          <div className="border-t border-gray-100 pt-5 text-center">
+            <p className="text-sm text-gray-600">
+              Don&apos;t have an account?
+            </p>
+
+            <Link
+              href="/student-signup"
+              className="mt-2 inline-block font-semibold text-blue-600 hover:text-blue-700 hover:underline"
+            >
+              Sign up for StudyShelf →
+            </Link>
+          </div>
         </form>
+
+        <div className="mt-6 border-t border-gray-200 pt-5 text-center">
+          <p className="text-sm text-gray-600">
+            Are you an administrator?
+          </p>
+
+          <Link
+            href="/admin-login"
+            className="mt-2 inline-block font-semibold text-blue-600 hover:text-blue-800 hover:underline"
+          >
+            Admin Login →
+          </Link>
+        </div>
       </div>
     </main>
   );

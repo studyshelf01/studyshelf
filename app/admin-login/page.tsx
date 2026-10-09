@@ -12,25 +12,62 @@ export default function AdminLoginPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleLogin(e: React.FormEvent) {
+  async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     setMessage("");
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
 
-    if (error) {
-      console.error("LOGIN ERROR:", error);
-      setMessage("Login failed. Please check your email and password.");
+      if (authError || !authData.user) {
+        console.error("LOGIN ERROR:", authError);
+        setMessage("Login failed. Please check your email and password.");
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role, status, is_owner")
+        .eq("id", authData.user.id)
+        .single();
+
+      if (profileError || !profile) {
+        console.error("PROFILE LOOKUP ERROR:", profileError);
+
+        await supabase.auth.signOut();
+        setMessage("Your account profile could not be verified. Please contact the owner.");
+        return;
+      }
+
+      if (profile.status !== "active") {
+        await supabase.auth.signOut();
+        setMessage("Your account is not active. Please contact the owner.");
+        return;
+      }
+
+      if (profile.role !== "admin") {
+        await supabase.auth.signOut();
+        setMessage("This login is for administrators only. Please use the student login.");
+        return;
+      }
+
+      if (profile.is_owner === true) {
+        router.replace("/owner");
+      } else {
+        router.replace("/admin");
+      }
+    } catch (error) {
+      console.error("UNEXPECTED LOGIN ERROR:", error);
+      setMessage("Something went wrong. Please try again.");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    router.push("/admin");
   }
 
   return (
@@ -98,7 +135,10 @@ export default function AdminLoginPage() {
             </div>
 
             {message && (
-              <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
+              <div
+                role="alert"
+                className="rounded-lg bg-red-50 p-4 text-sm text-red-700"
+              >
                 {message}
               </div>
             )}

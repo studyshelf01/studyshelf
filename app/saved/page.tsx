@@ -23,88 +23,168 @@ export default function SavedResourcesPage() {
   const [resources, setResources] = useState<SavedResource[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [canAccess, setCanAccess] = useState(false);
+  const [removingId, setRemovingId] = useState<number | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function loadSavedResources() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
 
-      if (!user) {
-        router.push("/student-login");
-        return;
+        if (userError || !user) {
+          router.replace("/student-login");
+          return;
+        }
+
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("role, status")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (profileError || !profile) {
+          await supabase.auth.signOut();
+          router.replace("/student-login");
+          return;
+        }
+
+        if (profile.role === "admin" && profile.status === "active") {
+          router.replace("/admin");
+          return;
+        }
+
+        if (profile.role !== "student" || profile.status !== "active") {
+          await supabase.auth.signOut();
+          router.replace("/student-login");
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from("saved_resources")
+          .select(`
+            resource_id,
+            resources (
+              id,
+              title,
+              description,
+              grade,
+              subject,
+              topic,
+              type,
+              file_url,
+              uploader_name
+            )
+          `)
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.error("Saved resources error:", error);
+
+          if (!cancelled) {
+            setMessage("Could not load your saved resources.");
+          }
+          return;
+        }
+
+        const savedResources = (data || [])
+          .map((item: any) => item.resources)
+          .filter(Boolean) as SavedResource[];
+
+        if (!cancelled) {
+          setResources(savedResources);
+          setCanAccess(true);
+        }
+      } catch (error) {
+        console.error("Saved resources access error:", error);
+
+        if (!cancelled) {
+          setMessage("Something went wrong while loading your saved resources.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
-
-      const { data, error } = await supabase
-        .from("saved_resources")
-        .select(
-          `
-          resource_id,
-          resources (
-            id,
-            title,
-            description,
-            grade,
-            subject,
-            topic,
-            type,
-            file_url,
-            uploader_name
-          )
-        `
-        )
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        console.error("Saved resources error:", error);
-        setMessage("Could not load your saved resources.");
-        setLoading(false);
-        return;
-      }
-
-      const savedResources = (data || [])
-        .map((item: any) => item.resources)
-        .filter(Boolean);
-
-      setResources(savedResources);
-      setLoading(false);
     }
 
     loadSavedResources();
+
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   async function removeSavedResource(resourceId: number) {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    if (removingId !== null) return;
 
-    if (!user) {
-      router.push("/student-login");
-      return;
-    }
+    setMessage("");
+    setRemovingId(resourceId);
 
-    const { error } = await supabase
-      .from("saved_resources")
-      .delete()
-      .eq("user_id", user.id)
-      .eq("resource_id", resourceId);
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-    if (error) {
+      if (userError || !user) {
+        router.replace("/student-login");
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role, status")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (
+        profileError ||
+        !profile ||
+        profile.role !== "student" ||
+        profile.status !== "active"
+      ) {
+        await supabase.auth.signOut();
+        router.replace("/student-login");
+        return;
+      }
+
+      const { error } = await supabase
+        .from("saved_resources")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("resource_id", resourceId);
+
+      if (error) {
+        console.error("Remove saved resource error:", error);
+        setMessage("Could not remove this resource.");
+        return;
+      }
+
+      setResources((current) =>
+        current.filter((resource) => resource.id !== resourceId)
+      );
+    } catch (error) {
       console.error("Remove saved resource error:", error);
-      setMessage("Could not remove this resource.");
-      return;
+      setMessage("Something went wrong while removing this resource.");
+    } finally {
+      setRemovingId(null);
     }
-
-    setResources((current) =>
-      current.filter((resource) => resource.id !== resourceId)
-    );
   }
 
-  if (loading) {
+  if (loading || !canAccess) {
     return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <p className="text-slate-600">Loading saved resources...</p>
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 px-6">
+        <p className="text-slate-600">
+          {loading
+            ? "Checking your student account..."
+            : "Redirecting to login..."}
+        </p>
       </main>
     );
   }
@@ -154,7 +234,10 @@ export default function SavedResourcesPage() {
         </div>
 
         {message && (
-          <p className="mt-6 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+          <p
+            role="alert"
+            className="mt-6 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700"
+          >
             {message}
           </p>
         )}
@@ -237,10 +320,12 @@ export default function SavedResourcesPage() {
                   </Link>
 
                   <button
+                    type="button"
                     onClick={() => removeSavedResource(resource.id)}
-                    className="rounded-xl border px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    disabled={removingId !== null}
+                    className="rounded-xl border px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Remove
+                    {removingId === resource.id ? "Removing..." : "Remove"}
                   </button>
                 </div>
               </article>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type Resource = {
@@ -19,37 +20,90 @@ type Resource = {
 };
 
 export default function MyUploadsPage() {
+  const router = useRouter();
+
   const [resources, setResources] = useState<Resource[]>([]);
   const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
+
     async function loadMyUploads() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
 
-      if (!user) {
-        window.location.href = "/student-login";
-        return;
+        if (userError || !user) {
+          router.replace("/student-login");
+          return;
+        }
+
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("role, status")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (profileError || !profile) {
+          await supabase.auth.signOut();
+          router.replace("/student-login");
+          return;
+        }
+
+        if (profile.role === "admin" && profile.status === "active") {
+          router.replace("/admin");
+          return;
+        }
+
+        if (profile.role !== "student" || profile.status !== "active") {
+          await supabase.auth.signOut();
+          router.replace("/student-login");
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from("resources")
+          .select(
+            "id, created_at, title, description, grade, subject, topic, type, status, file_url, uploader_name, rejection_reason"
+          )
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.error("MY UPLOADS ERROR:", error);
+
+          if (!cancelled) {
+            setMessage("Could not load your uploads. Please try again.");
+          }
+
+          return;
+        }
+
+        if (!cancelled) {
+          setResources((data || []) as Resource[]);
+        }
+      } catch (error) {
+        console.error("MY UPLOADS ACCESS ERROR:", error);
+
+        if (!cancelled) {
+          setMessage("Something went wrong while loading your uploads.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
-
-      const { data, error } = await supabase
-        .from("resources")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        console.error("MY UPLOADS ERROR:", error);
-      } else {
-        setResources(data || []);
-      }
-
-      setLoading(false);
     }
 
     loadMyUploads();
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   function statusLabel(status: string) {
     if (status === "approved") return "APPROVED";
@@ -78,7 +132,7 @@ export default function MyUploadsPage() {
     return (
       <main className="min-h-screen bg-gray-50 px-6 py-12">
         <div className="mx-auto max-w-4xl rounded-2xl bg-white p-8 text-center shadow-sm">
-          Loading your uploads...
+          Checking your student account...
         </div>
       </main>
     );
@@ -103,6 +157,15 @@ export default function MyUploadsPage() {
             View the resources you have submitted and their status.
           </p>
         </div>
+
+        {message && (
+          <div
+            role="alert"
+            className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+          >
+            {message}
+          </div>
+        )}
 
         {resources.length === 0 ? (
           <div className="rounded-2xl border bg-white p-8 text-center shadow-sm">

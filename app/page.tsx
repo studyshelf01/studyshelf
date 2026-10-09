@@ -1,7 +1,7 @@
-
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type Resource = {
@@ -106,7 +106,6 @@ function matchesSearch(query: string, resource: Resource) {
 
       if (queryWord.length >= 5) {
         const allowedDistance = queryWord.length >= 8 ? 2 : 1;
-
         return editDistance(queryWord, word) <= allowedDistance;
       }
 
@@ -116,6 +115,8 @@ function matchesSearch(query: string, resource: Resource) {
 }
 
 export default function Home() {
+  const router = useRouter();
+
   const [resources, setResources] = useState<Resource[]>([]);
   const [ratings, setRatings] = useState<Record<number, RatingSummary>>({});
   const [loading, setLoading] = useState(true);
@@ -138,73 +139,146 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [search]);
 
+  // Active students and admins, including the owner, can use the homepage.
   useEffect(() => {
+    let cancelled = false;
+
     async function checkLogin() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
 
-      if (!user) {
-        window.location.href = "/student-login";
-        return;
+        if (cancelled) return;
+
+        if (userError || !user) {
+          router.replace("/student-login");
+          return;
+        }
+
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("role, status")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (cancelled) return;
+
+        if (profileError || !profile) {
+          console.error("PROFILE LOADING ERROR:", profileError);
+
+          await supabase.auth.signOut();
+
+          if (!cancelled) {
+            router.replace("/student-login");
+          }
+
+          return;
+        }
+
+        const allowedRole =
+          profile.role === "student" || profile.role === "admin";
+
+        if (!allowedRole || profile.status !== "active") {
+          await supabase.auth.signOut();
+
+          if (!cancelled) {
+            router.replace("/student-login");
+          }
+
+          return;
+        }
+
+        // Stay on the homepage; do not redirect admins to /admin.
+        setIsLoggedIn(true);
+      } catch (error) {
+        console.error("ACCOUNT CHECK ERROR:", error);
+
+        await supabase.auth.signOut();
+
+        if (!cancelled) {
+          router.replace("/student-login");
+        }
+      } finally {
+        if (!cancelled) {
+          setCheckingLogin(false);
+        }
       }
-
-      setIsLoggedIn(true);
-      setCheckingLogin(false);
-      await loadResources();
     }
 
     checkLogin();
-  }, []);
 
-  async function loadResources() {
-    setLoading(true);
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
-    const { data, error } = await supabase
-      .from("resources")
-      .select("*")
-      .eq("status", "approved")
-      .order("created_at", { ascending: false });
+  // Load approved resources and review summaries after login.
+  useEffect(() => {
+    let cancelled = false;
 
-    if (error) {
-      console.error("RESOURCE LOADING ERROR:", error);
+    async function loadResources() {
+      setLoading(true);
+
+      const { data, error } = await supabase
+        .from("resources")
+        .select("*")
+        .eq("status", "approved")
+        .order("created_at", { ascending: false });
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error("RESOURCE LOADING ERROR:", error);
+        setLoading(false);
+        return;
+      }
+
+      setResources((data || []) as Resource[]);
+
+      const { data: reviewData, error: reviewError } = await supabase
+        .from("reviews")
+        .select("resource_id, rating");
+
+      if (cancelled) return;
+
+      if (reviewError) {
+        console.error("REVIEW LOADING ERROR:", reviewError);
+      } else {
+        const ratingMap: Record<number, RatingSummary> = {};
+
+        (reviewData as Review[] | null)?.forEach((review) => {
+          if (!ratingMap[review.resource_id]) {
+            ratingMap[review.resource_id] = {
+              average: 0,
+              count: 0,
+            };
+          }
+
+          ratingMap[review.resource_id].average += review.rating;
+          ratingMap[review.resource_id].count += 1;
+        });
+
+        Object.keys(ratingMap).forEach((resourceId) => {
+          const id = Number(resourceId);
+          ratingMap[id].average /= ratingMap[id].count;
+        });
+
+        setRatings(ratingMap);
+      }
+
       setLoading(false);
-      return;
     }
 
-    setResources((data || []) as Resource[]);
-
-    const { data: reviewData, error: reviewError } = await supabase
-      .from("reviews")
-      .select("resource_id, rating");
-
-    if (reviewError) {
-      console.error("REVIEW LOADING ERROR:", reviewError);
-    } else {
-      const ratingMap: Record<number, RatingSummary> = {};
-
-      (reviewData as Review[] | null)?.forEach((review) => {
-        if (!ratingMap[review.resource_id]) {
-          ratingMap[review.resource_id] = {
-            average: 0,
-            count: 0,
-          };
-        }
-
-        ratingMap[review.resource_id].average += review.rating;
-        ratingMap[review.resource_id].count += 1;
-      });
-
-      Object.keys(ratingMap).forEach((resourceId) => {
-        const id = Number(resourceId);
-        ratingMap[id].average /= ratingMap[id].count;
-      });
-
-      setRatings(ratingMap);
+    if (isLoggedIn) {
+      loadResources();
     }
 
-    setLoading(false);
-  }
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn]);
 
   const subjects = Array.from(
     new Set(resources.map((resource) => resource.subject).filter(Boolean))
@@ -308,6 +382,11 @@ export default function Home() {
     setShowSuggestions(false);
   }
 
+  async function logOut() {
+    await supabase.auth.signOut();
+    router.replace("/student-login");
+  }
+
   if (checkingLogin) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-gray-50 px-6">
@@ -324,7 +403,6 @@ export default function Home() {
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-white text-gray-900">
-      {/* Navbar */}
       <header className="border-b bg-white">
         <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <a href="/" className="text-2xl font-bold">
@@ -354,10 +432,7 @@ export default function Home() {
             </a>
 
             <button
-              onClick={async () => {
-                await supabase.auth.signOut();
-                window.location.href = "/student-login";
-              }}
+              onClick={logOut}
               className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-center text-sm font-semibold hover:bg-gray-50 sm:flex-none"
             >
               Log Out
@@ -366,7 +441,6 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Hero and smarter search */}
       <section className="bg-gray-50 px-4 py-14 sm:px-6 sm:py-20">
         <div className="mx-auto max-w-4xl text-center">
           <h1 className="text-3xl font-bold tracking-tight sm:text-5xl">
@@ -452,7 +526,6 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Filters */}
       <section className="border-b bg-white px-4 py-6 sm:px-6">
         <div className="mx-auto grid max-w-6xl gap-3 sm:grid-cols-2 md:grid-cols-4">
           <select
@@ -503,11 +576,11 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Resources */}
       <section className="px-4 py-10 sm:px-6 sm:py-14">
         <div className="mx-auto max-w-6xl">
           <div className="mb-6">
             <h2 className="text-2xl font-bold">Study Resources</h2>
+
             <p className="mt-1 text-sm text-gray-500">
               {loading
                 ? "Loading resources..."
@@ -516,12 +589,12 @@ export default function Home() {
                       ? "resource"
                       : "resources"
                   } found`}
-              {!loading &&
-                sortBy === "most_viewed" &&
-                " · Sorted by most viewed"}
-              {!loading &&
-                sortBy === "highest_rated" &&
-                " · Sorted by highest rated"}
+              {!loading && sortBy === "most_viewed"
+                ? " · Sorted by most viewed"
+                : null}
+              {!loading && sortBy === "highest_rated"
+                ? " · Sorted by highest rated"
+                : null}
             </p>
           </div>
 
@@ -532,9 +605,11 @@ export default function Home() {
           ) : filteredResources.length === 0 ? (
             <div className="rounded-2xl border bg-gray-50 p-8 text-center">
               <h3 className="font-semibold">No resources found</h3>
+
               <p className="mt-2 text-sm text-gray-500">
                 Try another spelling or change your search and filters.
               </p>
+
               <button
                 onClick={clearFilters}
                 className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
@@ -614,11 +689,11 @@ export default function Home() {
         </div>
       </section>
 
-      {/* How It Works */}
       <section className="bg-gray-50 px-4 py-12 sm:px-6 sm:py-16">
         <div className="mx-auto max-w-5xl">
           <div className="text-center">
             <h2 className="text-2xl font-bold">How It Works</h2>
+
             <p className="mt-2 text-sm text-gray-600">
               Share useful resources and find what you need.
             </p>
@@ -629,8 +704,8 @@ export default function Home() {
               <div className="text-3xl">🔎</div>
               <h3 className="mt-4 font-bold">Find Resources</h3>
               <p className="mt-2 text-sm leading-6 text-gray-600">
-                Search for notes, assignments, practice questions,
-                and other study resources.
+                Search for notes, assignments, practice questions, and other
+                study resources.
               </p>
             </div>
 
@@ -646,15 +721,14 @@ export default function Home() {
               <div className="text-3xl">⭐</div>
               <h3 className="mt-4 font-bold">Help Each Other</h3>
               <p className="mt-2 text-sm leading-6 text-gray-600">
-                Rate and review resources to help students find
-                useful material.
+                Rate and review resources to help students find useful
+                material.
               </p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Footer */}
       <footer className="border-t bg-white px-4 py-8 sm:px-6">
         <div className="mx-auto flex max-w-6xl flex-col gap-3 text-center text-sm text-gray-500 sm:flex-row sm:items-center sm:justify-between sm:text-left">
           <p>StudyShelf</p>
@@ -672,13 +746,7 @@ export default function Home() {
               Upload
             </a>
 
-            <button
-              onClick={async () => {
-                await supabase.auth.signOut();
-                window.location.href = "/student-login";
-              }}
-              className="hover:text-gray-900"
-            >
+            <button onClick={logOut} className="hover:text-gray-900">
               Log Out
             </button>
           </div>
