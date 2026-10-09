@@ -99,10 +99,12 @@ export default function OwnerPage() {
           .eq("role", "admin")
           .order("created_at", { ascending: false }),
 
+        // Count student profiles except permanently rejected applications.
         supabase
           .from("profiles")
           .select("id", { count: "exact", head: true })
-          .eq("role", "student"),
+          .eq("role", "student")
+          .neq("status", "rejected"),
 
         supabase
           .from("profiles")
@@ -191,7 +193,6 @@ export default function OwnerPage() {
     setMessage("");
 
     try {
-      // Recheck the current session and owner privileges before updating.
       const {
         data: { user },
         error: authError,
@@ -221,7 +222,6 @@ export default function OwnerPage() {
         return;
       }
 
-      // Never target the owner or change the is_owner column.
       const { data: updated, error } = await supabase
         .from("profiles")
         .update(
@@ -317,9 +317,7 @@ export default function OwnerPage() {
 
       <section className="mx-auto max-w-6xl px-6 py-8">
         <div className="mb-8 rounded-2xl border border-blue-100 bg-white p-6">
-          <p className="text-sm font-semibold text-blue-700">
-            OWNER ACCESS
-          </p>
+          <p className="text-sm font-semibold text-blue-700">OWNER ACCESS</p>
           <h2 className="mt-2 text-2xl font-bold">
             Welcome to your dashboard
           </h2>
@@ -450,9 +448,7 @@ export default function OwnerPage() {
                               </span>
                             ) : (
                               <button
-                                onClick={() =>
-                                  void changeAdminAccess(admin)
-                                }
+                                onClick={() => void changeAdminAccess(admin)}
                                 disabled={busyId === admin.id}
                                 className={`rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 ${
                                   admin.role === "admin"

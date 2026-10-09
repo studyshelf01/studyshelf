@@ -43,7 +43,7 @@ type StudentProfile = {
   created_at: string;
 };
 
-type StudentStatus = "active" | "rejected" | "inactive";
+type StudentAction = "approve" | "deactivate" | "reactivate" | "reject";
 
 export default function AdminPage() {
   const router = useRouter();
@@ -112,34 +112,42 @@ export default function AdminPage() {
       }
 
       const resourceIds = Array.from(
-        new Set(reviewData.map((review) => review.resource_id))
+        new Set(
+          reviewData
+            .map((review) => review.resource_id)
+            .filter((id): id is number => id !== null)
+        )
       );
-
-      const { data: resourceData, error: resourceError } = await supabase
-        .from("resources")
-        .select("id, title")
-        .in("id", resourceIds);
-
-      if (resourceError) {
-        console.error("Review resource loading error:", resourceError);
-        setMessage(
-          `Could not load review resources: ${resourceError.message}`
-        );
-        return;
-      }
 
       const resourceTitleMap = new Map<number, string>();
 
-      (resourceData || []).forEach((resource) => {
-        resourceTitleMap.set(resource.id, resource.title);
-      });
+      if (resourceIds.length > 0) {
+        const { data: resourceData, error: resourceError } = await supabase
+          .from("resources")
+          .select("id, title")
+          .in("id", resourceIds);
+
+        if (resourceError) {
+          console.error("Review resource loading error:", resourceError);
+          setMessage(
+            `Could not load review resources: ${resourceError.message}`
+          );
+          return;
+        }
+
+        (resourceData || []).forEach((resource) => {
+          resourceTitleMap.set(resource.id, resource.title);
+        });
+      }
 
       setReviews(
         reviewData.map((review) => ({
           ...review,
           resource_title:
-            resourceTitleMap.get(review.resource_id) ||
-            `Resource #${review.resource_id}`,
+            review.resource_id === null
+              ? "Resource unavailable"
+              : resourceTitleMap.get(review.resource_id) ||
+                `Resource #${review.resource_id}`,
         })) as ReviewWithResource[]
       );
     } catch (error) {
@@ -236,19 +244,21 @@ export default function AdminPage() {
 
   async function updateStudentStatus(
     student: StudentProfile,
-    newStatus: StudentStatus
+    action: StudentAction
   ) {
-    const action =
-      newStatus === "active"
-        ? "approve"
-        : newStatus === "inactive"
-          ? "deactivate"
-          : "reject";
+    const actionLabels: Record<StudentAction, string> = {
+      approve: "approve",
+      deactivate: "deactivate",
+      reactivate: "reactivate",
+      reject: "permanently reject",
+    };
 
     const confirmed = window.confirm(
-      `Are you sure you want to ${action} ${
-        student.full_name || "this student"
-      }?`
+      action === "reject"
+        ? `Permanently reject ${student.full_name || "this applicant"} and delete their account? They will need to sign up again to reapply.`
+        : `Are you sure you want to ${actionLabels[action]} ${
+            student.full_name || "this student"
+          }?`
     );
 
     if (!confirmed) return;
@@ -258,77 +268,87 @@ export default function AdminPage() {
 
     try {
       const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
 
-      if (authError || !user) {
+      if (sessionError || !session) {
+        setMessage("Your session has expired. Please sign in again.");
         router.replace("/admin-login");
         return;
       }
 
-      const { data: currentAdmin, error: adminError } = await supabase
-        .from("profiles")
-        .select("role, status")
-        .eq("id", user.id)
-        .single();
-
-      if (
-        adminError ||
-        !currentAdmin ||
-        currentAdmin.role !== "admin" ||
-        currentAdmin.status !== "active"
-      ) {
-        setMessage(
-          "You are not authorized to manage student registrations."
-        );
-        router.replace("/");
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .update({ status: newStatus })
-        .eq("id", student.id)
-        .eq("role", "student")
-        .eq("status", student.status)
-        .select("id, status")
-        .maybeSingle();
-
-      if (error) {
-        console.error("Student status update error:", error);
-        setMessage(
-          `Could not ${action} the student: ${error.message}`
-        );
-        return;
-      }
-
-      if (!data) {
-        setMessage(
-          "The student status was not changed. The record may have changed, or a database policy may block this action."
-        );
-        await loadStudents();
-        return;
-      }
-
-      setStudents((current) =>
-        current.map((item) =>
-          item.id === student.id
-            ? { ...item, status: newStatus }
-            : item
-        )
+      const response = await fetch(
+        `/api/admin/students/${encodeURIComponent(student.id)}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ action }),
+        }
       );
 
-      setMessage(
-        newStatus === "active"
-          ? "Student approved."
-          : newStatus === "inactive"
-            ? "Student account deactivated."
-            : "Student registration rejected."
-      );
+      const result = (await response.json()) as {
+        success?: boolean;
+        status?: string;
+        message?: string;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        setMessage(
+          result.error ||
+            `Could not ${actionLabels[action]} the student.`
+        );
+
+        if (response.status === 401) {
+          router.replace("/admin-login");
+        }
+
+        if (response.status === 409) {
+          await loadStudents();
+        }
+
+        return;
+      }
+
+      if (action === "reject") {
+        setStudents((current) =>
+          current.filter((item) => item.id !== student.id)
+        );
+        setMessage(
+          result.message ||
+            "The pending application was rejected and the account was deleted."
+        );
+      } else {
+        const newStatus =
+          action === "deactivate"
+            ? "inactive"
+            : "active";
+
+        setStudents((current) =>
+          current.map((item) =>
+            item.id === student.id
+              ? { ...item, status: result.status || newStatus }
+              : item
+          )
+        );
+
+        setMessage(
+          action === "approve"
+            ? "Student approved."
+            : action === "deactivate"
+              ? "Student account deactivated."
+              : "Student account reactivated."
+        );
+      }
     } catch (error) {
-      console.error("Student status update error:", error);
-      setMessage(`An unexpected error occurred while trying to ${action}.`);
+      console.error("Student action error:", error);
+      setMessage(
+        "Could not complete the student action. Check your connection and refresh the dashboard."
+      );
     } finally {
       setBusyStudentId(null);
     }
@@ -410,8 +430,7 @@ export default function AdminPage() {
         .from("resources")
         .update({
           status,
-          rejection_reason:
-            status === "rejected" ? rejectionReason : null,
+          rejection_reason: status === "rejected" ? rejectionReason : null,
         })
         .eq("id", id);
 
@@ -438,9 +457,7 @@ export default function AdminPage() {
       );
 
       setMessage(
-        status === "approved"
-          ? "Resource approved."
-          : "Resource hidden."
+        status === "approved" ? "Resource approved." : "Resource hidden."
       );
     } catch (error) {
       console.error("Resource status update error:", error);
@@ -599,16 +616,14 @@ export default function AdminPage() {
         <section>
           <div className="mb-6">
             <div className="flex flex-wrap items-center gap-3">
-              <h2 className="text-xl font-bold">
-                Student Sign-up Approval
-              </h2>
+              <h2 className="text-xl font-bold">Student Sign-up Approval</h2>
               <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">
                 {pendingStudents.length} pending
               </span>
             </div>
             <p className="mt-1 text-sm text-slate-500">
-              Approve new student accounts or reject registrations that should
-              not receive access.
+              Approve new student accounts or permanently reject pending
+              applications.
             </p>
           </div>
 
@@ -661,9 +676,7 @@ export default function AdminPage() {
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={() =>
-                          updateStudentStatus(student, "active")
-                        }
+                        onClick={() => updateStudentStatus(student, "approve")}
                         disabled={busyStudentId === student.id}
                         className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
@@ -674,13 +687,13 @@ export default function AdminPage() {
 
                       <button
                         type="button"
-                        onClick={() =>
-                          updateStudentStatus(student, "rejected")
-                        }
+                        onClick={() => updateStudentStatus(student, "reject")}
                         disabled={busyStudentId === student.id}
                         className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        Reject
+                        {busyStudentId === student.id
+                          ? "Working..."
+                          : "Reject Permanently"}
                       </button>
                     </div>
                   </div>
@@ -716,38 +729,48 @@ export default function AdminPage() {
                         className={`rounded-full px-3 py-1 text-xs font-bold ${
                           student.status === "active"
                             ? "bg-green-100 text-green-700"
-                            : student.status === "rejected"
-                              ? "bg-red-100 text-red-700"
-                              : "bg-slate-100 text-slate-700"
+                            : student.status === "inactive"
+                              ? "bg-slate-100 text-slate-700"
+                              : "bg-red-100 text-red-700"
                         }`}
                       >
                         {student.status.toUpperCase()}
                       </span>
 
-                      {student.status !== "active" && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            updateStudentStatus(student, "active")
-                          }
-                          disabled={busyStudentId === student.id}
-                          className="rounded-lg border px-3 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
-                        >
-                          Approve
-                        </button>
-                      )}
-
                       {student.status === "active" && (
                         <button
                           type="button"
                           onClick={() =>
-                            updateStudentStatus(student, "inactive")
+                            updateStudentStatus(student, "deactivate")
                           }
                           disabled={busyStudentId === student.id}
                           className="rounded-lg border px-3 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
                         >
-                          Deactivate
+                          {busyStudentId === student.id
+                            ? "Working..."
+                            : "Deactivate"}
                         </button>
+                      )}
+
+                      {student.status === "inactive" && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateStudentStatus(student, "reactivate")
+                          }
+                          disabled={busyStudentId === student.id}
+                          className="rounded-lg border px-3 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          {busyStudentId === student.id
+                            ? "Working..."
+                            : "Reactivate"}
+                        </button>
+                      )}
+
+                      {student.status === "rejected" && (
+                        <span className="text-xs text-slate-500">
+                          Legacy rejection record
+                        </span>
                       )}
                     </div>
                   </div>
@@ -1102,5 +1125,3 @@ export default function AdminPage() {
     </main>
   );
 }
-
-

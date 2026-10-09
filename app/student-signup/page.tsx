@@ -37,7 +37,6 @@ export default function StudentSignupPage() {
         email: email.trim(),
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/student-login`,
           data: {
             full_name: fullName.trim(),
             grade,
@@ -50,10 +49,14 @@ export default function StudentSignupPage() {
         throw signupError;
       }
 
-      // With email confirmation enabled, a new account normally has no session yet.
-      // Do not treat signup as approval or grant access here.
+      // With email confirmation disabled, signup normally creates a session.
+      // Sign out immediately so a pending student cannot bypass approval.
       if (data.session) {
-        await supabase.auth.signOut();
+        const { error: signOutError } = await supabase.auth.signOut();
+
+        if (signOutError) {
+          throw signOutError;
+        }
       }
 
       setSuccess(true);
@@ -105,17 +108,17 @@ export default function StudentSignupPage() {
               role="status"
               className="rounded-xl border border-green-200 bg-green-50 p-5 text-sm leading-6 text-green-900"
             >
-              <h2 className="text-lg font-bold">Account request received! 🎉</h2>
+              <h2 className="text-lg font-bold">
+                Registration submitted successfully! 🎉
+              </h2>
+
               <p className="mt-2">
-                If your registration was accepted, check your email for the
-                confirmation link and open it to verify your email address.
+                Your account is waiting for administrator approval.
+                You can sign in once your account has been approved.
               </p>
-              <p className="mt-2">
-                After confirming your email, your account will remain pending
-                until an administrator approves it.
-              </p>
+
               <p className="mt-3">
-                Already confirmed?{" "}
+                Ready to sign in?{" "}
                 <Link
                   href="/student-login"
                   className="font-semibold underline"
@@ -270,8 +273,8 @@ export default function StudentSignupPage() {
               </button>
 
               <p className="text-center text-xs leading-5 text-slate-500">
-                Email confirmation and administrator approval are required
-                before you can access student features.
+                Administrator approval is required before you can access
+                student features.
               </p>
             </form>
           )}
