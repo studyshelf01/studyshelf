@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState } from "react";
@@ -39,7 +38,9 @@ export default function StudentLoginPage() {
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("role, status")
+        .select(
+          "role, status, application_rejection_reason"
+        )
         .eq("id", data.user.id)
         .maybeSingle();
 
@@ -57,24 +58,20 @@ export default function StudentLoginPage() {
         return;
       }
 
+      if (
+        profile.status === "pending" ||
+        profile.status === "rejected"
+      ) {
+        router.push("/application-status");
+        router.refresh();
+        return;
+      }
+
       if (profile.status !== "active") {
         await supabase.auth.signOut();
-
-        if (profile.status === "pending") {
-          setMessageType("info");
-          setMessage(
-            "Your email is confirmed, but your account is waiting for administrator approval. Please try again after your account is approved."
-          );
-        } else if (profile.status === "rejected") {
-          setMessage(
-            "Your account was not approved. Please contact an administrator for assistance."
-          );
-        } else {
-          setMessage(
-            "Your account is not active. Please contact an administrator."
-          );
-        }
-
+        setMessage(
+          "Your account is not active. Please contact an administrator."
+        );
         return;
       }
 

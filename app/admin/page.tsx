@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -43,7 +42,7 @@ type StudentProfile = {
   created_at: string;
 };
 
-type StudentAction = "approve" | "deactivate" | "reactivate" | "reject";
+type StudentAction = "approve" | "reject" | "deactivate" | "reactivate";
 
 export default function AdminPage() {
   const router = useRouter();
@@ -57,6 +56,7 @@ export default function AdminPage() {
   const [studentsLoading, setStudentsLoading] = useState(true);
   const [busyStudentId, setBusyStudentId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState<"error" | "success">("success");
 
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -66,176 +66,150 @@ export default function AdminPage() {
   const [editTopic, setEditTopic] = useState("");
   const [editType, setEditType] = useState("");
 
+  function showMessage(text: string, type: "error" | "success" = "success") {
+    setMessage(text);
+    setMessageType(type);
+  }
+
   const loadResources = useCallback(async () => {
     setLoading(true);
 
-    try {
-      const { data, error } = await supabase
-        .from("resources")
-        .select("*")
-        .in("status", ["pending", "approved", "hidden"])
-        .order("created_at", { ascending: false });
+    const { data, error } = await supabase
+      .from("resources")
+      .select("*")
+      .in("status", ["pending", "approved", "hidden"])
+      .order("created_at", { ascending: false });
 
-      if (error) {
-        console.error("Resource loading error:", error);
-        setMessage(`Could not load resources: ${error.message}`);
-        return;
-      }
-
-      setResources((data || []) as Resource[]);
-    } catch (error) {
+    if (error) {
       console.error("Resource loading error:", error);
-      setMessage("An unexpected error occurred while loading resources.");
-    } finally {
-      setLoading(false);
+      showMessage(`Could not load resources: ${error.message}`, "error");
+    } else {
+      setResources((data || []) as Resource[]);
     }
+
+    setLoading(false);
   }, []);
 
   const loadReviews = useCallback(async () => {
     setReviewsLoading(true);
 
-    try {
-      const { data: reviewData, error: reviewError } = await supabase
-        .from("reviews")
-        .select("*")
-        .order("created_at", { ascending: false });
+    const { data: reviewData, error: reviewError } = await supabase
+      .from("reviews")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-      if (reviewError) {
-        console.error("Review loading error:", reviewError);
-        setMessage(`Could not load reviews: ${reviewError.message}`);
-        return;
-      }
-
-      if (!reviewData || reviewData.length === 0) {
-        setReviews([]);
-        return;
-      }
-
-      const resourceIds = Array.from(
-        new Set(
-          reviewData
-            .map((review) => review.resource_id)
-            .filter((id): id is number => id !== null)
-        )
-      );
-
-      const resourceTitleMap = new Map<number, string>();
-
-      if (resourceIds.length > 0) {
-        const { data: resourceData, error: resourceError } = await supabase
-          .from("resources")
-          .select("id, title")
-          .in("id", resourceIds);
-
-        if (resourceError) {
-          console.error("Review resource loading error:", resourceError);
-          setMessage(
-            `Could not load review resources: ${resourceError.message}`
-          );
-          return;
-        }
-
-        (resourceData || []).forEach((resource) => {
-          resourceTitleMap.set(resource.id, resource.title);
-        });
-      }
-
-      setReviews(
-        reviewData.map((review) => ({
-          ...review,
-          resource_title:
-            review.resource_id === null
-              ? "Resource unavailable"
-              : resourceTitleMap.get(review.resource_id) ||
-                `Resource #${review.resource_id}`,
-        })) as ReviewWithResource[]
-      );
-    } catch (error) {
-      console.error("Review loading error:", error);
-      setMessage("An unexpected error occurred while loading reviews.");
-    } finally {
+    if (reviewError) {
+      console.error("Review loading error:", reviewError);
+      showMessage(`Could not load reviews: ${reviewError.message}`, "error");
       setReviewsLoading(false);
+      return;
     }
+
+    if (!reviewData || reviewData.length === 0) {
+      setReviews([]);
+      setReviewsLoading(false);
+      return;
+    }
+
+    const resourceIds = Array.from(
+      new Set(reviewData.map((review) => review.resource_id))
+    );
+
+    const { data: resourceData, error: resourceError } = await supabase
+      .from("resources")
+      .select("id, title")
+      .in("id", resourceIds);
+
+    if (resourceError) {
+      console.error("Review resource loading error:", resourceError);
+      showMessage(
+        `Could not load review resources: ${resourceError.message}`,
+        "error"
+      );
+      setReviewsLoading(false);
+      return;
+    }
+
+    const resourceTitleMap = new Map<number, string>();
+
+    (resourceData || []).forEach((resource) => {
+      resourceTitleMap.set(resource.id, resource.title);
+    });
+
+    setReviews(
+      reviewData.map((review) => ({
+        ...review,
+        resource_title:
+          resourceTitleMap.get(review.resource_id) ||
+          `Resource #${review.resource_id}`,
+      })) as ReviewWithResource[]
+    );
+
+    setReviewsLoading(false);
   }, []);
 
   const loadStudents = useCallback(async () => {
     setStudentsLoading(true);
 
-    try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, full_name, role, status, grade, section, created_at")
-        .eq("role", "student")
-        .in("status", ["pending", "active", "rejected", "inactive"])
-        .order("created_at", { ascending: false });
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, full_name, role, status, grade, section, created_at")
+      .eq("role", "student")
+      .in("status", ["pending", "active", "rejected", "inactive"])
+      .order("created_at", { ascending: false });
 
-      if (error) {
-        console.error("Student profile loading error:", error);
-        setStudents([]);
-        setMessage(`Could not load student registrations: ${error.message}`);
-        return;
-      }
-
-      setStudents((data || []) as StudentProfile[]);
-    } catch (error) {
+    if (error) {
       console.error("Student profile loading error:", error);
+      showMessage(
+        `Could not load student registrations: ${error.message}`,
+        "error"
+      );
       setStudents([]);
-      setMessage("An unexpected error occurred while loading students.");
-    } finally {
-      setStudentsLoading(false);
+    } else {
+      setStudents((data || []) as StudentProfile[]);
     }
+
+    setStudentsLoading(false);
   }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     async function checkAdmin() {
-      try {
-        const {
-          data: { user },
-          error: authError,
-        } = await supabase.auth.getUser();
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
 
-        if (cancelled) return;
+      if (cancelled) return;
 
-        if (authError || !user) {
-          router.replace("/admin-login");
-          return;
-        }
-
-        const { data: profile, error } = await supabase
-          .from("profiles")
-          .select("role, status")
-          .eq("id", user.id)
-          .single();
-
-        if (cancelled) return;
-
-        if (
-          error ||
-          !profile ||
-          profile.role !== "admin" ||
-          profile.status !== "active"
-        ) {
-          router.replace("/");
-          return;
-        }
-
-        await Promise.all([
-          loadResources(),
-          loadReviews(),
-          loadStudents(),
-        ]);
-      } catch (error) {
-        console.error("Admin verification error:", error);
-
-        if (!cancelled) {
-          router.replace("/admin-login");
-        }
+      if (authError || !user) {
+        router.replace("/admin-login");
+        return;
       }
+
+      const { data: profile, error } = await supabase
+        .from("profiles")
+        .select("role, status")
+        .eq("id", user.id)
+        .single();
+
+      if (cancelled) return;
+
+      if (error || !profile) {
+        router.replace("/");
+        return;
+      }
+
+      if (profile.role !== "admin" || profile.status !== "active") {
+        router.replace("/");
+        return;
+      }
+
+      await Promise.all([loadResources(), loadReviews(), loadStudents()]);
     }
 
-    void checkAdmin();
+    checkAdmin();
 
     return () => {
       cancelled = true;
@@ -244,21 +218,63 @@ export default function AdminPage() {
 
   async function updateStudentStatus(
     student: StudentProfile,
-    action: StudentAction
+    newStatus: "active" | "rejected" | "inactive"
   ) {
-    const actionLabels: Record<StudentAction, string> = {
-      approve: "approve",
-      deactivate: "deactivate",
-      reactivate: "reactivate",
-      reject: "permanently reject",
-    };
+    if (busyStudentId) return;
+
+    let action: StudentAction;
+    let reason: string | undefined;
+
+    if (newStatus === "rejected") {
+      if (student.status !== "pending") {
+        showMessage("Only pending applications can be rejected.", "error");
+        return;
+      }
+
+      const enteredReason = window.prompt(
+        `Why are you rejecting "${student.full_name || "this student"}"?\n\nEnter the reason the student should see:`
+      );
+
+      if (enteredReason === null) return;
+
+      reason = enteredReason.trim();
+
+      if (!reason) {
+        showMessage("Please enter a rejection reason.", "error");
+        return;
+      }
+
+      action = "reject";
+    } else if (newStatus === "inactive") {
+      if (student.status !== "active") {
+        showMessage("Only active students can be deactivated.", "error");
+        return;
+      }
+
+      action = "deactivate";
+    } else if (student.status === "pending") {
+      action = "approve";
+    } else if (student.status === "inactive") {
+      action = "reactivate";
+    } else {
+      showMessage(
+        "Rejected applications must be resubmitted by the student before they can be approved.",
+        "error"
+      );
+      return;
+    }
+
+    const actionLabel =
+      action === "approve"
+        ? "approve"
+        : action === "reject"
+          ? "reject"
+          : action === "deactivate"
+            ? "deactivate"
+            : "reactivate";
 
     const confirmed = window.confirm(
-      action === "reject"
-        ? `Permanently reject ${student.full_name || "this applicant"} and delete their account? They will need to sign up again to reapply.`
-        : `Are you sure you want to ${actionLabels[action]} ${
-            student.full_name || "this student"
-          }?`
+      `Are you sure you want to ${actionLabel} ${student.full_name || "this student"}?`
     );
 
     if (!confirmed) return;
@@ -273,8 +289,8 @@ export default function AdminPage() {
       } = await supabase.auth.getSession();
 
       if (sessionError || !session) {
-        setMessage("Your session has expired. Please sign in again.");
         router.replace("/admin-login");
+        showMessage("Your session expired. Please sign in again.", "error");
         return;
       }
 
@@ -286,68 +302,44 @@ export default function AdminPage() {
             "Content-Type": "application/json",
             Authorization: `Bearer ${session.access_token}`,
           },
-          body: JSON.stringify({ action }),
+          body: JSON.stringify({
+            action,
+            ...(action === "reject" ? { reason } : {}),
+          }),
         }
       );
 
-      const result = (await response.json()) as {
-        success?: boolean;
-        status?: string;
-        message?: string;
-        error?: string;
-      };
+      const result = await response.json().catch(() => null);
 
-      if (!response.ok) {
-        setMessage(
-          result.error ||
-            `Could not ${actionLabels[action]} the student.`
+      if (!response.ok || !result?.success) {
+        console.error("Student action failed:", result);
+
+        const details =
+          typeof result?.details === "string" ? ` ${result.details}` : "";
+
+        showMessage(
+          `${result?.error || `Could not ${actionLabel} the student.`}${details}`,
+          "error"
         );
 
-        if (response.status === 401) {
-          router.replace("/admin-login");
-        }
-
-        if (response.status === 409) {
-          await loadStudents();
-        }
-
+        await loadStudents();
         return;
       }
 
-      if (action === "reject") {
-        setStudents((current) =>
-          current.filter((item) => item.id !== student.id)
-        );
-        setMessage(
-          result.message ||
-            "The pending application was rejected and the account was deleted."
-        );
-      } else {
-        const newStatus =
-          action === "deactivate"
-            ? "inactive"
-            : "active";
+      setStudents((current) =>
+        current.map((item) =>
+          item.id === student.id
+            ? { ...item, status: result.status }
+            : item
+        )
+      );
 
-        setStudents((current) =>
-          current.map((item) =>
-            item.id === student.id
-              ? { ...item, status: result.status || newStatus }
-              : item
-          )
-        );
-
-        setMessage(
-          action === "approve"
-            ? "Student approved."
-            : action === "deactivate"
-              ? "Student account deactivated."
-              : "Student account reactivated."
-        );
-      }
+      showMessage(result.message || `Student ${actionLabel}d successfully.`);
     } catch (error) {
-      console.error("Student action error:", error);
-      setMessage(
-        "Could not complete the student action. Check your connection and refresh the dashboard."
+      console.error("Student action request error:", error);
+      showMessage(
+        "Could not reach the student approval API. Check that the development server is running, then try again.",
+        "error"
       );
     } finally {
       setBusyStudentId(null);
@@ -377,92 +369,91 @@ export default function AdminPage() {
 
   async function saveChanges(resourceId: number) {
     if (!editTitle.trim() || !editGrade.trim() || !editSubject.trim()) {
-      setMessage("Title, grade, and subject cannot be empty.");
+      showMessage("Title, grade, and subject cannot be empty.", "error");
       return;
     }
 
     setMessage("");
 
-    try {
-      const { data, error } = await supabase
-        .from("resources")
-        .update({
-          title: editTitle.trim(),
-          description: editDescription.trim() || null,
-          grade: editGrade.trim(),
-          subject: editSubject.trim(),
-          topic: editTopic.trim() || null,
-          type: editType,
-        })
-        .eq("id", resourceId)
-        .select()
-        .single();
+    const { data, error } = await supabase
+      .from("resources")
+      .update({
+        title: editTitle.trim(),
+        description: editDescription.trim() || null,
+        grade: editGrade.trim(),
+        subject: editSubject.trim(),
+        topic: editTopic.trim() || null,
+        type: editType,
+      })
+      .eq("id", resourceId)
+      .select()
+      .single();
 
-      if (error) {
-        console.error("Resource update error:", error);
-        setMessage(`Could not save changes: ${error.message}`);
-        return;
-      }
-
-      setResources((current) =>
-        current.map((resource) =>
-          resource.id === resourceId ? (data as Resource) : resource
-        )
-      );
-
-      setEditingId(null);
-      setMessage("Resource changes saved.");
-    } catch (error) {
+    if (error) {
       console.error("Resource update error:", error);
-      setMessage("An unexpected error occurred while saving the resource.");
+      showMessage(`Could not save changes: ${error.message}`, "error");
+      return;
     }
+
+    setResources((current) =>
+      current.map((resource) =>
+        resource.id === resourceId ? (data as Resource) : resource
+      )
+    );
+
+    setEditingId(null);
+    showMessage("Resource changes saved.");
   }
 
   async function updateStatus(
     id: number,
-    status: "approved" | "rejected" | "hidden",
+    status: string,
     rejectionReason: string | null = null
   ) {
     setMessage("");
 
-    try {
-      const { error } = await supabase
-        .from("resources")
-        .update({
-          status,
-          rejection_reason: status === "rejected" ? rejectionReason : null,
-        })
-        .eq("id", id);
+    const updateData: {
+      status: string;
+      rejection_reason?: string | null;
+    } = {
+      status,
+      rejection_reason: status === "rejected" ? rejectionReason : null,
+    };
 
-      if (error) {
-        console.error("Resource status update error:", error);
-        setMessage(`Could not update resource: ${error.message}`);
-        return;
-      }
+    const { error } = await supabase
+      .from("resources")
+      .update(updateData)
+      .eq("id", id);
 
-      if (status === "rejected") {
-        setResources((current) =>
-          current.filter((resource) => resource.id !== id)
-        );
-        setMessage("Resource rejected and reason saved.");
-        return;
-      }
-
-      setResources((current) =>
-        current.map((resource) =>
-          resource.id === id
-            ? { ...resource, status, rejection_reason: null }
-            : resource
-        )
-      );
-
-      setMessage(
-        status === "approved" ? "Resource approved." : "Resource hidden."
-      );
-    } catch (error) {
+    if (error) {
       console.error("Resource status update error:", error);
-      setMessage("An unexpected error occurred while updating the resource.");
+      showMessage(`Could not update resource: ${error.message}`, "error");
+      return;
     }
+
+    if (status === "rejected") {
+      setResources((current) =>
+        current.filter((resource) => resource.id !== id)
+      );
+      showMessage("Resource rejected and reason saved.");
+      return;
+    }
+
+    setResources((current) =>
+      current.map((resource) =>
+        resource.id === id
+          ? { ...resource, status, rejection_reason: null }
+          : resource
+      )
+    );
+
+    showMessage(
+      status === "approved"
+        ? "Resource approved."
+        : status === "hidden"
+          ? "Resource hidden."
+          : "Resource updated."
+    );
   }
 
   async function rejectResource(resource: Resource) {
@@ -473,7 +464,7 @@ export default function AdminPage() {
     if (reason === null) return;
 
     if (!reason.trim()) {
-      setMessage("Please enter a rejection reason.");
+      showMessage("Please enter a rejection reason.", "error");
       return;
     }
 
@@ -511,62 +502,53 @@ export default function AdminPage() {
       console.error("Could not determine storage file:", error);
     }
 
-    try {
-      const { error: databaseError } = await supabase
-        .from("resources")
-        .delete()
-        .eq("id", resource.id);
+    const { error: databaseError } = await supabase
+      .from("resources")
+      .delete()
+      .eq("id", resource.id);
 
-      if (databaseError) {
-        console.error("Resource deletion error:", databaseError);
-        setMessage(`Could not remove resource: ${databaseError.message}`);
-        return;
-      }
-
-      setResources((current) =>
-        current.filter((item) => item.id !== resource.id)
+    if (databaseError) {
+      console.error("Resource deletion error:", databaseError);
+      showMessage(
+        `Could not remove resource: ${databaseError.message}`,
+        "error"
       );
-
-      setMessage("Resource permanently removed.");
-      await loadReviews();
-    } catch (error) {
-      console.error("Resource deletion error:", error);
-      setMessage("An unexpected error occurred while removing the resource.");
+      return;
     }
+
+    setResources((current) =>
+      current.filter((item) => item.id !== resource.id)
+    );
+
+    showMessage("Resource permanently removed.");
+    await loadReviews();
   }
 
   async function removeReview(review: ReviewWithResource) {
     const confirmed = window.confirm(
-      `Remove the review by "${
-        review.reviewer_name || "Student"
-      }" from "${review.resource_title}"? This cannot be undone.`
+      `Remove the review by "${review.reviewer_name || "Student"}" from "${review.resource_title}"? This cannot be undone.`
     );
 
     if (!confirmed) return;
 
     setMessage("");
 
-    try {
-      const { error } = await supabase
-        .from("reviews")
-        .delete()
-        .eq("id", review.id);
+    const { error } = await supabase
+      .from("reviews")
+      .delete()
+      .eq("id", review.id);
 
-      if (error) {
-        console.error("Review deletion error:", error);
-        setMessage(`Could not remove review: ${error.message}`);
-        return;
-      }
-
-      setReviews((current) =>
-        current.filter((item) => item.id !== review.id)
-      );
-
-      setMessage("Review removed.");
-    } catch (error) {
+    if (error) {
       console.error("Review deletion error:", error);
-      setMessage("An unexpected error occurred while removing the review.");
+      showMessage(`Could not remove review: ${error.message}`, "error");
+      return;
     }
+
+    setReviews((current) =>
+      current.filter((item) => item.id !== review.id)
+    );
+
+    showMessage("Review removed.");
   }
 
   function statusLabel(status: string) {
@@ -607,7 +589,11 @@ export default function AdminPage() {
         {message && (
           <div
             role="status"
-            className="rounded-xl border bg-white px-4 py-3 text-sm"
+            className={`rounded-xl border px-4 py-3 text-sm ${
+              messageType === "error"
+                ? "border-red-200 bg-red-50 text-red-800"
+                : "border-green-200 bg-green-50 text-green-800"
+            }`}
           >
             {message}
           </div>
@@ -622,8 +608,8 @@ export default function AdminPage() {
               </span>
             </div>
             <p className="mt-1 text-sm text-slate-500">
-              Approve new student accounts or permanently reject pending
-              applications.
+              Approve new student accounts or reject registrations that should
+              not receive access.
             </p>
           </div>
 
@@ -658,7 +644,9 @@ export default function AdminPage() {
 
                       <p className="mt-2 text-sm text-slate-600">
                         Grade: {student.grade || "Not provided"}
-                        {student.section ? ` • Section: ${student.section}` : ""}
+                        {student.section
+                          ? ` • Section: ${student.section}`
+                          : ""}
                       </p>
 
                       <p className="mt-2 break-all text-xs text-slate-400">
@@ -675,9 +663,10 @@ export default function AdminPage() {
 
                     <div className="flex flex-wrap gap-2">
                       <button
-                        type="button"
-                        onClick={() => updateStudentStatus(student, "approve")}
-                        disabled={busyStudentId === student.id}
+                        onClick={() =>
+                          updateStudentStatus(student, "active")
+                        }
+                        disabled={busyStudentId !== null}
                         className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {busyStudentId === student.id
@@ -686,14 +675,15 @@ export default function AdminPage() {
                       </button>
 
                       <button
-                        type="button"
-                        onClick={() => updateStudentStatus(student, "reject")}
-                        disabled={busyStudentId === student.id}
+                        onClick={() =>
+                          updateStudentStatus(student, "rejected")
+                        }
+                        disabled={busyStudentId !== null}
                         className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {busyStudentId === student.id
                           ? "Working..."
-                          : "Reject Permanently"}
+                          : "Reject"}
                       </button>
                     </div>
                   </div>
@@ -720,7 +710,9 @@ export default function AdminPage() {
                       </p>
                       <p className="mt-1 text-sm text-slate-500">
                         Grade: {student.grade || "Not provided"}
-                        {student.section ? ` • Section: ${student.section}` : ""}
+                        {student.section
+                          ? ` • Section: ${student.section}`
+                          : ""}
                       </p>
                     </div>
 
@@ -729,36 +721,20 @@ export default function AdminPage() {
                         className={`rounded-full px-3 py-1 text-xs font-bold ${
                           student.status === "active"
                             ? "bg-green-100 text-green-700"
-                            : student.status === "inactive"
-                              ? "bg-slate-100 text-slate-700"
-                              : "bg-red-100 text-red-700"
+                            : student.status === "rejected"
+                              ? "bg-red-100 text-red-700"
+                              : "bg-slate-100 text-slate-700"
                         }`}
                       >
                         {student.status.toUpperCase()}
                       </span>
 
-                      {student.status === "active" && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            updateStudentStatus(student, "deactivate")
-                          }
-                          disabled={busyStudentId === student.id}
-                          className="rounded-lg border px-3 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
-                        >
-                          {busyStudentId === student.id
-                            ? "Working..."
-                            : "Deactivate"}
-                        </button>
-                      )}
-
                       {student.status === "inactive" && (
                         <button
-                          type="button"
                           onClick={() =>
-                            updateStudentStatus(student, "reactivate")
+                            updateStudentStatus(student, "active")
                           }
-                          disabled={busyStudentId === student.id}
+                          disabled={busyStudentId !== null}
                           className="rounded-lg border px-3 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
                         >
                           {busyStudentId === student.id
@@ -767,10 +743,24 @@ export default function AdminPage() {
                         </button>
                       )}
 
+                      {student.status === "active" && (
+                        <button
+                          onClick={() =>
+                            updateStudentStatus(student, "inactive")
+                          }
+                          disabled={busyStudentId !== null}
+                          className="rounded-lg border px-3 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          {busyStudentId === student.id
+                            ? "Working..."
+                            : "Deactivate"}
+                        </button>
+                      )}
+
                       {student.status === "rejected" && (
-                        <span className="text-xs text-slate-500">
-                          Legacy rejection record
-                        </span>
+                        <p className="text-sm text-slate-500">
+                          Waiting for the student to reapply
+                        </p>
                       )}
                     </div>
                   </div>
@@ -889,7 +879,6 @@ export default function AdminPage() {
 
                       <div className="mt-5 flex flex-wrap gap-2">
                         <button
-                          type="button"
                           onClick={() => saveChanges(resource.id)}
                           className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
                         >
@@ -897,7 +886,6 @@ export default function AdminPage() {
                         </button>
 
                         <button
-                          type="button"
                           onClick={cancelEditing}
                           className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-slate-50"
                         >
@@ -968,7 +956,6 @@ export default function AdminPage() {
                         </a>
 
                         <button
-                          type="button"
                           onClick={() => startEditing(resource)}
                           className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
                         >
@@ -978,7 +965,6 @@ export default function AdminPage() {
                         {resource.status === "pending" && (
                           <>
                             <button
-                              type="button"
                               onClick={() =>
                                 updateStatus(resource.id, "approved")
                               }
@@ -988,7 +974,6 @@ export default function AdminPage() {
                             </button>
 
                             <button
-                              type="button"
                               onClick={() => rejectResource(resource)}
                               className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600"
                             >
@@ -999,7 +984,6 @@ export default function AdminPage() {
 
                         {resource.status === "approved" && (
                           <button
-                            type="button"
                             onClick={() =>
                               updateStatus(resource.id, "hidden")
                             }
@@ -1011,7 +995,6 @@ export default function AdminPage() {
 
                         {resource.status === "hidden" && (
                           <button
-                            type="button"
                             onClick={() =>
                               updateStatus(resource.id, "approved")
                             }
@@ -1022,7 +1005,6 @@ export default function AdminPage() {
                         )}
 
                         <button
-                          type="button"
                           onClick={() => removeResource(resource)}
                           className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
                         >
@@ -1058,66 +1040,65 @@ export default function AdminPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              {reviews.map((review) => {
-                const rating = Math.max(0, Math.min(5, review.rating));
+              {reviews.map((review) => (
+                <article
+                  key={review.id}
+                  className="rounded-2xl border bg-white p-6 shadow-sm"
+                >
+                  <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                        Review for
+                      </p>
 
-                return (
-                  <article
-                    key={review.id}
-                    className="rounded-2xl border bg-white p-6 shadow-sm"
-                  >
-                    <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="min-w-0">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                          Review for
-                        </p>
+                      <h3 className="mt-1 text-lg font-bold">
+                        {review.resource_title}
+                      </h3>
 
-                        <h3 className="mt-1 text-lg font-bold">
-                          {review.resource_title}
-                        </h3>
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <span className="font-semibold">
+                          {review.reviewer_name || "Anonymous"}
+                        </span>
 
-                        <div className="mt-3 flex flex-wrap items-center gap-3">
-                          <span className="font-semibold">
-                            {review.reviewer_name || "Anonymous"}
+                        <span className="text-lg tracking-wide">
+                          <span className="text-yellow-400">
+                            {"★".repeat(
+                              Math.max(0, Math.min(5, review.rating))
+                            )}
                           </span>
-
-                          <span className="text-lg tracking-wide">
-                            <span className="text-yellow-400">
-                              {"★".repeat(rating)}
-                            </span>
-                            <span className="text-slate-300">
-                              {"★".repeat(5 - rating)}
-                            </span>
+                          <span className="text-slate-300">
+                            {"★".repeat(
+                              5 - Math.max(0, Math.min(5, review.rating))
+                            )}
                           </span>
+                        </span>
 
-                          <span className="text-sm text-slate-500">
-                            {review.rating}/5
-                          </span>
-                        </div>
-
-                        {review.review_text && (
-                          <p className="mt-4 rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-700">
-                            {review.review_text}
-                          </p>
-                        )}
-
-                        <p className="mt-3 text-xs text-slate-400">
-                          Review ID: {review.id} • Resource ID:{" "}
-                          {review.resource_id}
-                        </p>
+                        <span className="text-sm text-slate-500">
+                          {review.rating}/5
+                        </span>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => removeReview(review)}
-                        className="shrink-0 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
-                      >
-                        Remove Review
-                      </button>
+                      {review.review_text && (
+                        <p className="mt-4 rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+                          {review.review_text}
+                        </p>
+                      )}
+
+                      <p className="mt-3 text-xs text-slate-400">
+                        Review ID: {review.id} • Resource ID:{" "}
+                        {review.resource_id}
+                      </p>
                     </div>
-                  </article>
-                );
-              })}
+
+                    <button
+                      onClick={() => removeReview(review)}
+                      className="shrink-0 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                    >
+                      Remove Review
+                    </button>
+                  </div>
+                </article>
+              ))}
             </div>
           )}
         </section>
