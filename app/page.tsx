@@ -729,6 +729,19 @@ export default function Home() {
         </div>
       </section>
 
+      <section
+        aria-label="Educational disclaimer"
+        className="border-t bg-gray-50 px-4 py-4 sm:px-6"
+      >
+        <div className="mx-auto max-w-6xl text-center">
+          <p className="text-xs leading-5 text-gray-500">
+            <span className="font-semibold text-gray-600">Disclaimer:</span>{" "}
+            Resources may contain errors. Please verify information with your
+            teachers or official study materials.
+          </p>
+        </div>
+      </section>
+
       <footer className="border-t bg-white px-4 py-8 sm:px-6">
         <div className="mx-auto flex max-w-6xl flex-col gap-3 text-center text-sm text-gray-500 sm:flex-row sm:items-center sm:justify-between sm:text-left">
           <p>StudyShelf</p>
