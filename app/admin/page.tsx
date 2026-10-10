@@ -55,6 +55,7 @@ export default function AdminPage() {
   const [reviewsLoading, setReviewsLoading] = useState(true);
   const [studentsLoading, setStudentsLoading] = useState(true);
   const [busyStudentId, setBusyStudentId] = useState<string | null>(null);
+  const [busyResourceId, setBusyResourceId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"error" | "success">("success");
 
@@ -66,7 +67,10 @@ export default function AdminPage() {
   const [editTopic, setEditTopic] = useState("");
   const [editType, setEditType] = useState("");
 
-  function showMessage(text: string, type: "error" | "success" = "success") {
+  function showMessage(
+    text: string,
+    type: "error" | "success" = "success"
+  ) {
     setMessage(text);
     setMessageType(type);
   }
@@ -77,7 +81,7 @@ export default function AdminPage() {
     const { data, error } = await supabase
       .from("resources")
       .select("*")
-      .in("status", ["pending", "approved", "hidden"])
+      .in("status", ["pending", "approved", "hidden", "rejected"])
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -209,7 +213,7 @@ export default function AdminPage() {
       await Promise.all([loadResources(), loadReviews(), loadStudents()]);
     }
 
-    checkAdmin();
+    void checkAdmin();
 
     return () => {
       cancelled = true;
@@ -220,7 +224,7 @@ export default function AdminPage() {
     student: StudentProfile,
     newStatus: "active" | "rejected" | "inactive"
   ) {
-    if (busyStudentId) return;
+    if (busyStudentId !== null) return;
 
     let action: StudentAction;
     let reason: string | undefined;
@@ -405,25 +409,128 @@ export default function AdminPage() {
     showMessage("Resource changes saved.");
   }
 
+  async function permanentlyDeleteResource(
+    resource: Resource,
+    purpose: "rejection" | "removal"
+  ) {
+    if (busyResourceId !== null) return;
+
+    setBusyResourceId(resource.id);
+    setMessage("");
+
+    try {
+      const { data: deletedRows, error: databaseError } = await supabase
+        .from("resources")
+        .delete()
+        .eq("id", resource.id)
+        .select("id");
+
+      if (databaseError) {
+        console.error("Resource deletion error:", databaseError);
+        showMessage(
+          `Could not delete "${resource.title}" from the database: ${databaseError.message}. The uploaded file has not been removed.`,
+          "error"
+        );
+        return;
+      }
+
+      if (!deletedRows || deletedRows.length === 0) {
+        showMessage(
+          `No database row was deleted for "${resource.title}". Check your Supabase DELETE policy and refresh the dashboard.`,
+          "error"
+        );
+        await loadResources();
+        return;
+      }
+
+      setResources((current) =>
+        current.filter((item) => item.id !== resource.id)
+      );
+
+      let filePath: string | null = null;
+
+      try {
+        const fileUrl = new URL(resource.file_url);
+        const configuredSupabaseUrl =
+          process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+        if (!configuredSupabaseUrl) {
+          throw new Error("NEXT_PUBLIC_SUPABASE_URL is not configured.");
+        }
+
+        const expectedHost = new URL(configuredSupabaseUrl).host;
+        const marker = "/storage/v1/object/public/resources/";
+
+        if (
+          fileUrl.protocol === "https:" &&
+          fileUrl.host === expectedHost &&
+          fileUrl.pathname.includes(marker)
+        ) {
+          const markerIndex = fileUrl.pathname.indexOf(marker);
+          filePath = decodeURIComponent(
+            fileUrl.pathname.substring(markerIndex + marker.length)
+          );
+
+          if (!filePath || filePath.includes("..")) {
+            filePath = null;
+          }
+        }
+      } catch (error) {
+        console.error("Could not parse resource storage URL:", error);
+      }
+
+      if (!filePath) {
+        showMessage(
+          `The database record for "${resource.title}" was deleted, but the uploaded file path could not be verified. Check the resources Storage bucket.`,
+          "error"
+        );
+        await Promise.all([loadResources(), loadReviews()]);
+        return;
+      }
+
+      const { error: storageError } = await supabase.storage
+        .from("resources")
+        .remove([filePath]);
+
+      if (storageError) {
+        console.error("Storage deletion error:", storageError);
+        showMessage(
+          `The database record for "${resource.title}" was deleted, but its uploaded file could not be removed: ${storageError.message}. Check the resources Storage bucket.`,
+          "error"
+        );
+      } else {
+        showMessage(
+          purpose === "rejection"
+            ? `Resource "${resource.title}" was rejected and permanently deleted, including its uploaded file.`
+            : `Resource "${resource.title}" was permanently removed, including its uploaded file.`
+        );
+      }
+
+      await Promise.all([loadResources(), loadReviews()]);
+    } catch (error) {
+      console.error("Unexpected resource deletion error:", error);
+      showMessage(
+        "Something went wrong while deleting the resource. Refresh the dashboard and check Supabase before trying again.",
+        "error"
+      );
+    } finally {
+      setBusyResourceId(null);
+    }
+  }
+
   async function updateStatus(
-    id: number,
-    status: string,
-    rejectionReason: string | null = null
+    resource: Resource,
+    status: "approved" | "hidden"
   ) {
     setMessage("");
 
-    const updateData: {
-      status: string;
-      rejection_reason?: string | null;
-    } = {
-      status,
-      rejection_reason: status === "rejected" ? rejectionReason : null,
-    };
-
     const { error } = await supabase
       .from("resources")
-      .update(updateData)
-      .eq("id", id);
+      .update({
+        status,
+        rejection_reason: null,
+      })
+      .eq("id", resource.id);
 
     if (error) {
       console.error("Resource status update error:", error);
@@ -431,34 +538,22 @@ export default function AdminPage() {
       return;
     }
 
-    if (status === "rejected") {
-      setResources((current) =>
-        current.filter((resource) => resource.id !== id)
-      );
-      showMessage("Resource rejected and reason saved.");
-      return;
-    }
-
     setResources((current) =>
-      current.map((resource) =>
-        resource.id === id
-          ? { ...resource, status, rejection_reason: null }
-          : resource
+      current.map((item) =>
+        item.id === resource.id
+          ? { ...item, status, rejection_reason: null }
+          : item
       )
     );
 
     showMessage(
-      status === "approved"
-        ? "Resource approved."
-        : status === "hidden"
-          ? "Resource hidden."
-          : "Resource updated."
+      status === "approved" ? "Resource approved." : "Resource hidden."
     );
   }
 
   async function rejectResource(resource: Resource) {
     const reason = window.prompt(
-      `Why are you rejecting "${resource.title}"?\n\nEnter the reason the student should see:`
+      `Why are you rejecting "${resource.title}"?\n\nEnter a reason for your records:`
     );
 
     if (reason === null) return;
@@ -468,7 +563,13 @@ export default function AdminPage() {
       return;
     }
 
-    await updateStatus(resource.id, "rejected", reason.trim());
+    const confirmed = window.confirm(
+      `Permanently delete "${resource.title}" and its uploaded file? This cannot be undone. The rejection reason will not be retained in the deleted resource record.`
+    );
+
+    if (!confirmed) return;
+
+    await permanentlyDeleteResource(resource, "rejection");
   }
 
   async function removeResource(resource: Resource) {
@@ -478,50 +579,7 @@ export default function AdminPage() {
 
     if (!confirmed) return;
 
-    setMessage("");
-
-    try {
-      const fileUrl = new URL(resource.file_url);
-      const marker = "/storage/v1/object/public/resources/";
-      const markerIndex = fileUrl.pathname.indexOf(marker);
-
-      if (markerIndex !== -1) {
-        const filePath = decodeURIComponent(
-          fileUrl.pathname.substring(markerIndex + marker.length)
-        );
-
-        const { error: storageError } = await supabase.storage
-          .from("resources")
-          .remove([filePath]);
-
-        if (storageError) {
-          console.error("Storage deletion error:", storageError);
-        }
-      }
-    } catch (error) {
-      console.error("Could not determine storage file:", error);
-    }
-
-    const { error: databaseError } = await supabase
-      .from("resources")
-      .delete()
-      .eq("id", resource.id);
-
-    if (databaseError) {
-      console.error("Resource deletion error:", databaseError);
-      showMessage(
-        `Could not remove resource: ${databaseError.message}`,
-        "error"
-      );
-      return;
-    }
-
-    setResources((current) =>
-      current.filter((item) => item.id !== resource.id)
-    );
-
-    showMessage("Resource permanently removed.");
-    await loadReviews();
+    await permanentlyDeleteResource(resource, "removal");
   }
 
   async function removeReview(review: ReviewWithResource) {
@@ -554,6 +612,7 @@ export default function AdminPage() {
   function statusLabel(status: string) {
     if (status === "approved") return "APPROVED";
     if (status === "hidden") return "HIDDEN";
+    if (status === "rejected") return "REJECTED";
     return "PENDING";
   }
 
@@ -663,9 +722,7 @@ export default function AdminPage() {
 
                     <div className="flex flex-wrap gap-2">
                       <button
-                        onClick={() =>
-                          updateStudentStatus(student, "active")
-                        }
+                        onClick={() => void updateStudentStatus(student, "active")}
                         disabled={busyStudentId !== null}
                         className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
@@ -675,15 +732,11 @@ export default function AdminPage() {
                       </button>
 
                       <button
-                        onClick={() =>
-                          updateStudentStatus(student, "rejected")
-                        }
+                        onClick={() => void updateStudentStatus(student, "rejected")}
                         disabled={busyStudentId !== null}
                         className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {busyStudentId === student.id
-                          ? "Working..."
-                          : "Reject"}
+                        {busyStudentId === student.id ? "Working..." : "Reject"}
                       </button>
                     </div>
                   </div>
@@ -731,9 +784,7 @@ export default function AdminPage() {
 
                       {student.status === "inactive" && (
                         <button
-                          onClick={() =>
-                            updateStudentStatus(student, "active")
-                          }
+                          onClick={() => void updateStudentStatus(student, "active")}
                           disabled={busyStudentId !== null}
                           className="rounded-lg border px-3 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
                         >
@@ -745,9 +796,7 @@ export default function AdminPage() {
 
                       {student.status === "active" && (
                         <button
-                          onClick={() =>
-                            updateStudentStatus(student, "inactive")
-                          }
+                          onClick={() => void updateStudentStatus(student, "inactive")}
                           disabled={busyStudentId !== null}
                           className="rounded-lg border px-3 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
                         >
@@ -868,9 +917,7 @@ export default function AdminPage() {
                           </label>
                           <textarea
                             value={editDescription}
-                            onChange={(e) =>
-                              setEditDescription(e.target.value)
-                            }
+                            onChange={(e) => setEditDescription(e.target.value)}
                             rows={4}
                             className="w-full rounded-lg border px-3 py-2 outline-none focus:border-blue-500"
                           />
@@ -879,7 +926,7 @@ export default function AdminPage() {
 
                       <div className="mt-5 flex flex-wrap gap-2">
                         <button
-                          onClick={() => saveChanges(resource.id)}
+                          onClick={() => void saveChanges(resource.id)}
                           className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
                         >
                           Save Changes
@@ -908,11 +955,13 @@ export default function AdminPage() {
                         <div className="mb-3 flex flex-wrap items-center gap-2">
                           <span
                             className={`rounded-full px-3 py-1 text-xs font-bold ${
-                              resource.status === "approved"
-                                ? "bg-green-100 text-green-700"
-                                : resource.status === "hidden"
-                                  ? "bg-slate-200 text-slate-700"
-                                  : "bg-yellow-100 text-yellow-700"
+                              resource.status === "rejected"
+                                ? "bg-red-100 text-red-700"
+                                : resource.status === "approved"
+                                  ? "bg-green-100 text-green-700"
+                                  : resource.status === "hidden"
+                                    ? "bg-slate-200 text-slate-700"
+                                    : "bg-yellow-100 text-yellow-700"
                             }`}
                           >
                             {statusLabel(resource.status)}
@@ -955,39 +1004,40 @@ export default function AdminPage() {
                           Preview
                         </a>
 
-                        <button
-                          onClick={() => startEditing(resource)}
-                          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-                        >
-                          Edit
-                        </button>
+                        {resource.status !== "rejected" && (
+                          <button
+                            onClick={() => startEditing(resource)}
+                            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                          >
+                            Edit
+                          </button>
+                        )}
 
                         {resource.status === "pending" && (
                           <>
                             <button
-                              onClick={() =>
-                                updateStatus(resource.id, "approved")
-                              }
-                              className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+                              onClick={() => void updateStatus(resource, "approved")}
+                              disabled={busyResourceId !== null}
+                              className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
                             >
                               Approve
                             </button>
 
                             <button
-                              onClick={() => rejectResource(resource)}
-                              className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600"
+                              onClick={() => void rejectResource(resource)}
+                              disabled={busyResourceId !== null}
+                              className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600 disabled:opacity-50"
                             >
-                              Reject
+                              Reject & Delete
                             </button>
                           </>
                         )}
 
                         {resource.status === "approved" && (
                           <button
-                            onClick={() =>
-                              updateStatus(resource.id, "hidden")
-                            }
-                            className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                            onClick={() => void updateStatus(resource, "hidden")}
+                            disabled={busyResourceId !== null}
+                            className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
                           >
                             Hide
                           </button>
@@ -995,20 +1045,24 @@ export default function AdminPage() {
 
                         {resource.status === "hidden" && (
                           <button
-                            onClick={() =>
-                              updateStatus(resource.id, "approved")
-                            }
-                            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                            onClick={() => void updateStatus(resource, "approved")}
+                            disabled={busyResourceId !== null}
+                            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
                           >
                             Unhide
                           </button>
                         )}
 
                         <button
-                          onClick={() => removeResource(resource)}
-                          className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                          onClick={() => void removeResource(resource)}
+                          disabled={busyResourceId !== null}
+                          className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
                         >
-                          Remove
+                          {busyResourceId === resource.id
+                            ? "Deleting..."
+                            : resource.status === "rejected"
+                              ? "Delete Rejected Resource"
+                              : "Remove"}
                         </button>
                       </div>
                     </div>
@@ -1091,7 +1145,7 @@ export default function AdminPage() {
                     </div>
 
                     <button
-                      onClick={() => removeReview(review)}
+                      onClick={() => void removeReview(review)}
                       className="shrink-0 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
                     >
                       Remove Review
