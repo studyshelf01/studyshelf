@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -99,7 +98,6 @@ export default function OwnerPage() {
           .eq("role", "admin")
           .order("created_at", { ascending: false }),
 
-        // Count student profiles except permanently rejected applications.
         supabase
           .from("profiles")
           .select("id", { count: "exact", head: true })
@@ -112,9 +110,12 @@ export default function OwnerPage() {
           .eq("role", "student")
           .eq("status", "pending"),
 
+        // Count all resources except rejected ones.
+        // Include NULL statuses as well.
         supabase
           .from("resources")
-          .select("id", { count: "exact", head: true }),
+          .select("id", { count: "exact", head: true })
+          .or("status.neq.rejected,status.is.null"),
 
         supabase
           .from("resources")

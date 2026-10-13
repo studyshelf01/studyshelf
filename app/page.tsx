@@ -139,7 +139,7 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [search]);
 
-  // Active students and admins, including the owner, can use the homepage.
+  // Allow active students, admins, and owners to use the homepage.
   useEffect(() => {
     let cancelled = false;
 
@@ -168,8 +168,6 @@ export default function Home() {
         if (profileError || !profile) {
           console.error("PROFILE LOADING ERROR:", profileError);
 
-          await supabase.auth.signOut();
-
           if (!cancelled) {
             router.replace("/student-login");
           }
@@ -178,11 +176,11 @@ export default function Home() {
         }
 
         const allowedRole =
-          profile.role === "student" || profile.role === "admin";
+          profile.role === "student" ||
+          profile.role === "admin" ||
+          profile.role === "owner";
 
         if (!allowedRole || profile.status !== "active") {
-          await supabase.auth.signOut();
-
           if (!cancelled) {
             router.replace("/student-login");
           }
@@ -190,12 +188,10 @@ export default function Home() {
           return;
         }
 
-        // Stay on the homepage; do not redirect admins to /admin.
+        // Keep every permitted role on the homepage.
         setIsLoggedIn(true);
       } catch (error) {
         console.error("ACCOUNT CHECK ERROR:", error);
-
-        await supabase.auth.signOut();
 
         if (!cancelled) {
           router.replace("/student-login");
@@ -422,6 +418,20 @@ export default function Home() {
               className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-center text-sm font-semibold hover:bg-gray-50 sm:flex-none"
             >
               ⭐ Saved Resources
+            </a>
+
+            <a
+              href="/dashboard"
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-center text-sm font-semibold hover:bg-gray-50 sm:flex-none"
+            >
+              My Dashboard
+            </a>
+
+            <a
+              href="/quizzes"
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-center text-sm font-semibold hover:bg-gray-50 sm:flex-none"
+            >
+              Practice Quizzes
             </a>
 
             <a
@@ -753,6 +763,14 @@ export default function Home() {
 
             <a href="/saved" className="hover:text-gray-900">
               ⭐ Saved Resources
+            </a>
+
+            <a href="/dashboard" className="hover:text-gray-900">
+              My Dashboard
+            </a>
+
+            <a href="/quizzes" className="hover:text-gray-900">
+              Practice Quizzes
             </a>
 
             <a href="/upload" className="hover:text-gray-900">
