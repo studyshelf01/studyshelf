@@ -3,7 +3,12 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-type StudentAction = "approve" | "deactivate" | "reactivate" | "reject";
+type StudentAction =
+  | "approve"
+  | "deactivate"
+  | "reactivate"
+  | "reject"
+  | "delete";
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -69,7 +74,7 @@ export async function POST(
 
     if (callerError) {
       console.error("Admin profile lookup failed:", callerError.message);
-      return fail("Could not verify admin access.", 500, callerError.message);
+      return fail("Could not verify admin access.", 500);
     }
 
     if (
@@ -98,7 +103,11 @@ export async function POST(
 
     const action = body.action as StudentAction;
 
-    if (!["approve", "deactivate", "reactivate", "reject"].includes(action)) {
+    if (
+      !["approve", "deactivate", "reactivate", "reject", "delete"].includes(
+        action
+      )
+    ) {
       return fail("Unsupported action.", 400);
     }
 
@@ -116,7 +125,10 @@ export async function POST(
       }
 
       if (rejectionReason.length > 2000) {
-        return fail("The rejection reason must be 2000 characters or fewer.", 400);
+        return fail(
+          "The rejection reason must be 2000 characters or fewer.",
+          400
+        );
       }
     }
 
@@ -128,11 +140,44 @@ export async function POST(
 
     if (studentError) {
       console.error("Student lookup failed:", studentError.message);
-      return fail("Could not load the student profile.", 500, studentError.message);
+      return fail("Could not load the student profile.", 500);
     }
 
     if (!student || student.role !== "student" || student.is_owner === true) {
       return fail("Student profile not found in this Supabase project.", 404);
+    }
+
+    if (action === "delete") {
+      if (studentId === user.id) {
+        return fail("You cannot delete your own account here.", 403);
+      }
+
+      if (student.status !== "rejected") {
+        return fail(
+          "Only rejected student accounts can be permanently deleted.",
+          409
+        );
+      }
+
+      const { error: deleteError } =
+        await adminClient.auth.admin.deleteUser(studentId);
+
+      if (deleteError) {
+        console.error(
+          "Student account deletion failed:",
+          deleteError.message
+        );
+        return fail(
+          "Could not delete the student's account. Check database relationships and try again.",
+          500,
+          deleteError.message
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: "Student account permanently deleted.",
+      });
     }
 
     let expectedStatus: string;
@@ -178,11 +223,7 @@ export async function POST(
         `Student ${action} update failed for ${studentId}:`,
         updateError.message
       );
-      return fail(
-        `Could not ${action} the student.`,
-        500,
-        updateError.message
-      );
+      return fail(`Could not ${action} the student.`, 500, updateError.message);
     }
 
     if (!updatedProfile) {
@@ -191,8 +232,6 @@ export async function POST(
         409
       );
     }
-
-    console.info(`Student action succeeded: ${action}, status=${newStatus}`);
 
     return NextResponse.json({
       success: true,
