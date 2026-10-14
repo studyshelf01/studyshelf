@@ -24,6 +24,33 @@ type Question = {
   difficulty: string;
 };
 
+type PromiseWithResolversSupport = PromiseConstructor & {
+  withResolvers?: <T>() => {
+    promise: Promise<T>;
+    resolve: (value: T | PromiseLike<T>) => void;
+    reject: (reason?: unknown) => void;
+  };
+};
+
+function addPromiseWithResolversFallback() {
+  const promiseConstructor =
+    Promise as PromiseWithResolversSupport;
+
+  if (typeof promiseConstructor.withResolvers !== "function") {
+    promiseConstructor.withResolvers = function <T>() {
+      let resolve!: (value: T | PromiseLike<T>) => void;
+      let reject!: (reason?: unknown) => void;
+
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+
+      return { promise, resolve, reject };
+    };
+  }
+}
+
 export default function GenerateQuizPage() {
   const router = useRouter();
 
@@ -64,7 +91,9 @@ export default function GenerateQuizPage() {
           .maybeSingle();
 
         if (profileError) {
-          throw new Error("Could not verify your account permissions.");
+          throw new Error(
+            "Could not verify your account permissions."
+          );
         }
 
         if (!profile || profile.status !== "active") {
@@ -100,7 +129,9 @@ export default function GenerateQuizPage() {
           );
         }
       } finally {
-        if (!cancelled) setLoadingResources(false);
+        if (!cancelled) {
+          setLoadingResources(false);
+        }
       }
     }
 
@@ -137,10 +168,15 @@ export default function GenerateQuizPage() {
 
       if (sessionError || !session?.access_token) {
         router.replace("/login");
-        throw new Error("Your session has expired. Please sign in again.");
+        throw new Error(
+          "Your session has expired. Please sign in again."
+        );
       }
 
       setMessage("Reading your PDF...");
+
+      // Compatibility fallback for browsers without Promise.withResolvers.
+      addPromiseWithResolversFallback();
 
       const pdfjs = await import("pdfjs-dist");
       pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
@@ -155,10 +191,15 @@ export default function GenerateQuizPage() {
 
       const pdfData = await response.arrayBuffer();
       const pdf = await pdfjs.getDocument({ data: pdfData }).promise;
+
       const pageTexts: string[] = [];
       const pagesToRead = Math.min(pdf.numPages, 25);
 
-      for (let pageNumber = 1; pageNumber <= pagesToRead; pageNumber++) {
+      for (
+        let pageNumber = 1;
+        pageNumber <= pagesToRead;
+        pageNumber++
+      ) {
         const page = await pdf.getPage(pageNumber);
         const content = await page.getTextContent();
 
@@ -204,7 +245,10 @@ export default function GenerateQuizPage() {
         );
       }
 
-      if (!Array.isArray(result.questions) || result.questions.length < 5) {
+      if (
+        !Array.isArray(result.questions) ||
+        result.questions.length < 5
+      ) {
         throw new Error(
           "The AI did not return enough valid questions. Please try again with another resource."
         );
@@ -265,7 +309,9 @@ export default function GenerateQuizPage() {
 
   async function saveAttempt() {
     if (!userId || !questions.length) {
-      setError("Your result could not be saved. Please sign in again.");
+      setError(
+        "Your result could not be saved. Please sign in again."
+      );
       return;
     }
 
@@ -341,7 +387,9 @@ export default function GenerateQuizPage() {
         )}
 
         <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-xl sm:p-7">
-          <h2 className="text-xl font-semibold">Choose a study resource</h2>
+          <h2 className="text-xl font-semibold">
+            Choose a study resource
+          </h2>
 
           <p className="mt-2 text-sm leading-6 text-slate-400">
             Select an approved PDF. The AI will use its text to create
@@ -349,7 +397,9 @@ export default function GenerateQuizPage() {
           </p>
 
           {loadingResources ? (
-            <p className="mt-5 text-slate-400">Loading resources...</p>
+            <p className="mt-5 text-slate-400">
+              Loading resources...
+            </p>
           ) : resources.length === 0 ? (
             <p className="mt-5 rounded-xl bg-slate-800 p-4 text-sm text-slate-300">
               No approved resources are available yet.
@@ -366,14 +416,19 @@ export default function GenerateQuizPage() {
               <select
                 id="resource"
                 value={selectedResource}
-                onChange={(event) => setSelectedResource(event.target.value)}
+                onChange={(event) =>
+                  setSelectedResource(event.target.value)
+                }
                 disabled={generating}
                 className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 disabled:opacity-60"
               >
                 <option value="">Select a resource...</option>
 
                 {resources.map((resource) => (
-                  <option key={resource.id} value={String(resource.id)}>
+                  <option
+                    key={resource.id}
+                    value={String(resource.id)}
+                  >
                     {resource.grade} · {resource.subject} · {resource.title}
                   </option>
                 ))}
@@ -413,7 +468,9 @@ export default function GenerateQuizPage() {
                 disabled={!selectedResource || generating}
                 className="mt-5 w-full rounded-xl bg-cyan-400 px-5 py-3.5 font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {generating ? "Generating your AI quiz..." : "Generate AI quiz"}
+                {generating
+                  ? "Generating your AI quiz..."
+                  : "Generate AI quiz"}
               </button>
 
               <p className="mt-3 text-xs leading-5 text-slate-500">
@@ -431,8 +488,12 @@ export default function GenerateQuizPage() {
               <>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm text-cyan-300">{quizSubject}</p>
-                    <h2 className="mt-1 text-xl font-semibold">{quizTitle}</h2>
+                    <p className="text-sm text-cyan-300">
+                      {quizSubject}
+                    </p>
+                    <h2 className="mt-1 text-xl font-semibold">
+                      {quizTitle}
+                    </h2>
                   </div>
 
                   <p className="rounded-full bg-slate-800 px-3 py-1.5 text-sm text-slate-300">
@@ -486,7 +547,9 @@ export default function GenerateQuizPage() {
                           {String.fromCharCode(65 + index)}
                         </span>
 
-                        <span className="pt-0.5 leading-6">{option}</span>
+                        <span className="pt-0.5 leading-6">
+                          {option}
+                        </span>
                       </button>
                     );
                   })}
@@ -522,7 +585,9 @@ export default function GenerateQuizPage() {
                     <button
                       type="button"
                       onClick={finishQuiz}
-                      disabled={Object.keys(answers).length !== questions.length}
+                      disabled={
+                        Object.keys(answers).length !== questions.length
+                      }
                       className="rounded-xl bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Finish quiz
@@ -540,7 +605,9 @@ export default function GenerateQuizPage() {
                   Quiz completed
                 </p>
 
-                <h2 className="mt-2 text-2xl font-bold">{quizTitle}</h2>
+                <h2 className="mt-2 text-2xl font-bold">
+                  {quizTitle}
+                </h2>
 
                 <div className="mt-5 rounded-2xl bg-slate-800/70 p-6 text-center">
                   <p className="text-sm text-slate-400">Your score</p>
@@ -559,7 +626,9 @@ export default function GenerateQuizPage() {
                 </div>
 
                 <div className="mt-7">
-                  <h3 className="text-lg font-semibold">Review your answers</h3>
+                  <h3 className="text-lg font-semibold">
+                    Review your answers
+                  </h3>
 
                   <div className="mt-4 space-y-4">
                     {questions.map((question, index) => {
