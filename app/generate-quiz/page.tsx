@@ -84,11 +84,12 @@ export default function GenerateQuizPage() {
           return;
         }
 
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("role,status")
-          .eq("id", user.id)
-          .maybeSingle();
+        const { data: profile, error: profileError } =
+          await supabase
+            .from("profiles")
+            .select("role,status")
+            .eq("id", user.id)
+            .maybeSingle();
 
         if (profileError) {
           throw new Error(
@@ -105,16 +106,19 @@ export default function GenerateQuizPage() {
 
         setUserId(user.id);
 
-        const { data, error: resourcesError } = await supabase
-          .from("resources")
-          .select(
-            "id,title,description,grade,subject,topic,file_url,status"
-          )
-          .eq("status", "approved")
-          .order("created_at", { ascending: false });
+        const { data, error: resourcesError } =
+          await supabase
+            .from("resources")
+            .select(
+              "id,title,description,grade,subject,topic,file_url,status"
+            )
+            .eq("status", "approved")
+            .order("created_at", { ascending: false });
 
         if (resourcesError) {
-          throw new Error("Could not load approved resources.");
+          throw new Error(
+            "Could not load approved resources."
+          );
         }
 
         if (!cancelled) {
@@ -175,7 +179,7 @@ export default function GenerateQuizPage() {
 
       setMessage("Reading your PDF...");
 
-      // Compatibility fallback for browsers without Promise.withResolvers.
+      // Keep the existing compatibility fallback.
       addPromiseWithResolversFallback();
 
       const pdfjs = await import("pdfjs-dist");
@@ -190,7 +194,9 @@ export default function GenerateQuizPage() {
       }
 
       const pdfData = await response.arrayBuffer();
-      const pdf = await pdfjs.getDocument({ data: pdfData }).promise;
+      const pdf = await pdfjs.getDocument({
+        data: pdfData,
+      }).promise;
 
       const pageTexts: string[] = [];
       const pagesToRead = Math.min(pdf.numPages, 25);
@@ -201,11 +207,30 @@ export default function GenerateQuizPage() {
         pageNumber++
       ) {
         const page = await pdf.getPage(pageNumber);
-        const content = await page.getTextContent();
 
-        const text = content.items
-          .map((item) => ("str" in item ? item.str : ""))
-          .join(" ");
+        // Read the text stream directly instead of calling
+        // getTextContent(), which can fail in affected Safari
+        // versions when ReadableStream lacks async iteration.
+        const reader = page.streamTextContent().getReader();
+        const textParts: string[] = [];
+
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+
+            if (done) break;
+
+            for (const item of value.items) {
+              if ("str" in item) {
+                textParts.push(item.str);
+              }
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
+
+        const text = textParts.join(" ");
 
         if (text.trim()) {
           pageTexts.push(text);
@@ -291,7 +316,9 @@ export default function GenerateQuizPage() {
 
   function finishQuiz() {
     if (Object.keys(answers).length !== questions.length) {
-      setError("Please answer every question before finishing.");
+      setError(
+        "Please answer every question before finishing."
+      );
       return;
     }
 
