@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { builtInQuizzes } from "@/lib/quizzes";
 
 type StudyTopic = {
   id: number;
@@ -589,7 +588,10 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <form onSubmit={addTopic} className="mt-6 rounded-2xl border border-dashed border-slate-300 p-4 sm:p-5">
+            <form
+              onSubmit={addTopic}
+              className="mt-6 rounded-2xl border border-dashed border-slate-300 p-4 sm:p-5"
+            >
               <h3 className="font-bold">Add a new goal</h3>
               <p className="mt-1 text-sm text-slate-500">
                 What would you like to revise next?
@@ -709,57 +711,6 @@ export default function DashboardPage() {
           </section>
 
           <div className="space-y-6">
-            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.15em] text-violet-700">
-                    Build confidence
-                  </p>
-                  <h2 className="mt-2 text-xl font-extrabold">
-                    Practice quizzes
-                  </h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-500">
-                    Test what you know and learn from each answer.
-                  </p>
-                </div>
-                <span className="text-2xl">✦</span>
-              </div>
-
-              <div className="mt-5 space-y-3">
-                {builtInQuizzes.map((quiz) => (
-                  <Link
-                    key={quiz.id}
-                    href={`/quizzes?quiz=${encodeURIComponent(quiz.id)}`}
-                    className="group flex items-center justify-between gap-3 rounded-2xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50/60"
-                  >
-                    <div className="min-w-0">
-                      <span
-                        className={`inline-flex rounded-lg px-2 py-1 text-xs font-bold ${subjectColor(quiz.subject)}`}
-                      >
-                        {quiz.subject}
-                      </span>
-                      <h3 className="mt-2 font-bold group-hover:text-blue-700">
-                        {quiz.title}
-                      </h3>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {quiz.questions.length} questions
-                      </p>
-                    </div>
-                    <span className="text-xl text-slate-400 transition group-hover:translate-x-1 group-hover:text-blue-600">
-                      →
-                    </span>
-                  </Link>
-                ))}
-              </div>
-
-              <Link
-                href="/quizzes"
-                className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-violet-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-violet-700"
-              >
-                Explore all quizzes
-              </Link>
-            </section>
-
             <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
               <div className="flex items-center justify-between gap-3">
                 <div>
